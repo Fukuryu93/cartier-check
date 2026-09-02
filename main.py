@@ -89,7 +89,7 @@ def click_next_if_exists(page, timeout=3000):
     return False
 
 def fetch_verification_code_from_gmail(timeout_sec=60):
-    print("  -> Gmailから最新の認証コードメールを受信監視中...")
+    print("  -> Gmailから【カルティエ専用】最新の認証コードメールを受信監視中...")
     monitor_start_time = datetime.now(timezone.utc)
     start_time = time.time()
     
@@ -99,32 +99,28 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
             mail.login(USER_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
             mail.select("inbox")
             
-            # 未読メール（UNSEEN）を優先検索し、無ければALLから最新を取得
-            status, messages = mail.search(None, 'UNSEEN')
+            # 1. カルティエの送信元アドレス（noreply@mail.myboutique.pro）で検索
+            status, messages = mail.search(None, '(FROM "noreply@mail.myboutique.pro")')
+            
+            # 見つからなければ件名「カルティエ」で検索
             if status != "OK" or not messages[0]:
-                status, messages = mail.search(None, 'ALL')
+                status, messages = mail.search(None, '(SUBJECT "カルティエ")')
             
             if status == "OK" and messages[0]:
                 email_ids = messages[0].split()
                 # 最新のメール（配列の末尾）から順に確認
-                for email_id in reversed(email_ids[-3:]):
+                for email_id in reversed(email_ids[-5:]):
                     status, msg_data = mail.fetch(email_id, "(RFC822)")
                     for response_part in msg_data:
                         if isinstance(response_part, tuple):
                             msg = email.message_from_bytes(response_part[1])
                             
-                            # メールの受信日時を取得して監視開始前の古いメールを除外
-                            date_hdr = msg.get("Date")
-                            if date_hdr:
-                                try:
-                                    msg_date = parsedate_to_datetime(date_hdr)
-                                    if msg_date.tzinfo is None:
-                                        msg_date = msg_date.replace(tzinfo=timezone.utc)
-                                    # 監視開始より10秒以上前のメールは無視
-                                    if (monitor_start_time - msg_date).total_seconds() > 10:
-                                        continue
-                                except Exception:
-                                    pass
+                            # 2. 差出人・件名のダブルチェック（関係ないメールを完全除外）
+                            from_hdr = str(msg.get("From", ""))
+                            subject_hdr = str(msg.get("Subject", ""))
+                            
+                            if "myboutique" not in from_hdr.lower() and "カルティエ" not in subject_hdr and "カルティエ" not in from_hdr:
+                                continue
 
                             body = ""
                             if msg.is_multipart():
@@ -137,15 +133,18 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
                             else:
                                 body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
                             
-                            # 「認証コード」キーワード直後の4〜6桁数字を取得
-                            match = re.search(r"認証コード[^\d]*(\d{4,6})", body)
+                            # 3. HTMLタグやノイズを除去
+                            clean_text = re.sub(r'<[^>]+>', ' ', body)
+                            
+                            # 4. カルティエ専用フレーズ「認証コードはXXXXになります」から4桁数字を抽出
+                            match = re.search(r"認証コード[は:：\s]*(\d{4})", clean_text)
                             if not match:
-                                match = re.search(r"コード[^\d]*(\d{4,6})", body)
+                                match = re.search(r"コード[は:：\s]*(\d{4})", clean_text)
                                 
                             if match:
                                 code = match.group(1)
                                 mail.logout()
-                                print(f"  -> 【最新コード取得成功】認証コード: {code}")
+                                print(f"  -> 【カルティエ公式メールから抽出成功】認証コード: {code}")
                                 return code
             mail.logout()
         except Exception as e:
@@ -153,7 +152,7 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
         
         time.sleep(3)
     
-    print("  -> タイムアウト: 新しい認証コードメールを受信できませんでした。")
+    print("  -> タイムアウト: カルティエからの認証コードメールを受信できませんでした。")
     return None
 
 def fill_customer_info(page):
@@ -536,4 +535,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
