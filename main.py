@@ -4,6 +4,8 @@ import time
 import re
 import email
 import imaplib
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 from playwright.sync_api import sync_playwright
 import requests
 
@@ -87,7 +89,8 @@ def click_next_if_exists(page, timeout=3000):
     return False
 
 def fetch_verification_code_from_gmail(timeout_sec=60):
-    print("  -> Gmailから認証コードメールを受信監視中...")
+    print("  -> Gmailから最新の認証コードメールを受信監視中...")
+    monitor_start_time = datetime.now(timezone.utc)
     start_time = time.time()
     
     while time.time() - start_time < timeout_sec:
@@ -96,16 +99,33 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
             mail.login(USER_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
             mail.select("inbox")
             
-            status, messages = mail.search(None, 'ALL')
+            # 未読メール（UNSEEN）を優先検索し、無ければALLから最新を取得
+            status, messages = mail.search(None, 'UNSEEN')
+            if status != "OK" or not messages[0]:
+                status, messages = mail.search(None, 'ALL')
             
             if status == "OK" and messages[0]:
                 email_ids = messages[0].split()
-                for email_id in reversed(email_ids[-5:]):
+                # 最新のメール（配列の末尾）から順に確認
+                for email_id in reversed(email_ids[-3:]):
                     status, msg_data = mail.fetch(email_id, "(RFC822)")
                     for response_part in msg_data:
                         if isinstance(response_part, tuple):
                             msg = email.message_from_bytes(response_part[1])
                             
+                            # メールの受信日時を取得して監視開始前の古いメールを除外
+                            date_hdr = msg.get("Date")
+                            if date_hdr:
+                                try:
+                                    msg_date = parsedate_to_datetime(date_hdr)
+                                    if msg_date.tzinfo is None:
+                                        msg_date = msg_date.replace(tzinfo=timezone.utc)
+                                    # 監視開始より10秒以上前のメールは無視
+                                    if (monitor_start_time - msg_date).total_seconds() > 10:
+                                        continue
+                                except Exception:
+                                    pass
+
                             body = ""
                             if msg.is_multipart():
                                 for part in msg.walk():
@@ -117,14 +137,15 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
                             else:
                                 body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
                             
+                            # 「認証コード」キーワード直後の4〜6桁数字を取得
                             match = re.search(r"認証コード[^\d]*(\d{4,6})", body)
                             if not match:
-                                match = re.search(r"\b(\d{4,6})\b", body)
+                                match = re.search(r"コード[^\d]*(\d{4,6})", body)
                                 
                             if match:
                                 code = match.group(1)
                                 mail.logout()
-                                print(f"  -> 【自動取得成功】認証コード: {code}")
+                                print(f"  -> 【最新コード取得成功】認証コード: {code}")
                                 return code
             mail.logout()
         except Exception as e:
@@ -132,7 +153,7 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
         
         time.sleep(3)
     
-    print("  -> タイムアウト: 認証コードメールを受信できませんでした。")
+    print("  -> タイムアウト: 新しい認証コードメールを受信できませんでした。")
     return None
 
 def fill_customer_info(page):
@@ -186,7 +207,6 @@ def handle_verification_code(page):
     # --- 1. タップ(click)・フォーカスを行ってから入力 ---
     try:
         if len(inputs) == len(code):
-            # 1桁ずつ別々のボックスに分かれているタイプ
             for i, digit in enumerate(code):
                 inp = inputs[i]
                 inp.click()
@@ -196,7 +216,6 @@ def handle_verification_code(page):
                 inp.dispatch_event("change")
                 time.sleep(0.1)
         else:
-            # 1つの入力欄にまとめて入力するタイプ
             first_input = inputs[0]
             first_input.click()
             first_input.focus()
@@ -210,7 +229,7 @@ def handle_verification_code(page):
         print(f"  -> 入力処理中にエラー発生: {e}")
         return False
 
-    time.sleep(1.5)  # ボタンが活性化するのを待つ
+    time.sleep(1.5)
 
     # --- 2. 認証実行ボタンの特定とクリック ---
     confirm_keywords = ["認証", "確認", "送信", "予約確定", "完了", "予約を確定"]
@@ -517,3 +536,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
