@@ -239,7 +239,7 @@ def handle_verification_code(page):
             if btn.is_visible(timeout=1000):
                 btn.scroll_into_view_if_needed()
                 btn.click()
-                print(f"  -> 【認証実行】「{kw}」ボタンをクリックしました。")
+                print(f"  -> 【認証コード送信】「{kw}」ボタンをクリックしました。")
                 clicked = True
                 break
         except Exception:
@@ -249,13 +249,42 @@ def handle_verification_code(page):
         try:
             btn = page.locator("button:visible, input[type='submit']:visible").first
             btn.click(force=True)
-            print("  -> 【認証実行】可視ボタンを強制クリックしました。")
+            print("  -> 【認証コード送信】可視ボタンを強制クリックしました。")
         except Exception as e:
             print(f"  -> 【エラー】送信ボタンのクリックに失敗しました: {e}")
             page.screenshot(path="error_otp_submit_btn.png")
             return False
 
-    print("  -> 予約完了画面への遷移を確認中...")
+    # --- 認証コード送信後の追加フロー ---
+    print("  -> 認証コード送信後の画面遷移を待機中...")
+    time.sleep(3)
+
+    # ステップ1: 追加情報画面 (/cartier/additional-info) で「次へ」をクリック
+    print("  -> [1/3] 追加情報画面を通過。「次へ」をクリックします...")
+    click_next_if_exists(page, timeout=5000)
+    time.sleep(2.5)
+
+    # ステップ2: 最終確認画面 (/cartier/confirm) で「予約確定」をクリック
+    print("  -> [2/3] 最終確認画面に到達。「予約確定」ボタンをクリックします...")
+    confirm_btn = page.locator("button, [role='button']").filter(has_text="予約確定").first
+
+    if not confirm_btn.is_visible(timeout=3000):
+        confirm_btn = page.get_by_text("予約確定", exact=True).first
+
+    if confirm_btn.is_visible(timeout=3000):
+        confirm_btn.scroll_into_view_if_needed()
+        try:
+            confirm_btn.click(timeout=3000)
+            print("  -> 「予約確定」ボタンをクリックしました。")
+        except Exception:
+            print("  -> 通常クリック失敗のため、強制クリックを実行します...")
+            confirm_btn.click(force=True)
+    else:
+        print("  -> 「予約確定」ボタンが見つからないため、「次へ」ボタンを試行します...")
+        click_next_if_exists(page, timeout=3000)
+
+    # ステップ3: 予約完了画面 (/cartier/thank-you) への遷移を確認
+    print("  -> [3/3] 予約完了画面(thank-you)への遷移を確認中...")
     try:
         page.wait_for_load_state("networkidle", timeout=10000)
     except Exception:
@@ -263,13 +292,14 @@ def handle_verification_code(page):
     
     for _ in range(12):
         body_text = page.inner_text("body")
+        current_url = page.url
         
-        if any(kw in body_text for kw in ["予約が完了", "ご予約ありがとうございます", "完了いたしました", "受付いたしました"]):
+        if "thank-you" in current_url or any(kw in body_text for kw in ["予約が完了", "ご予約ありがとうございます", "完了いたしました", "受付いたしました"]):
             print("  -> 【確定成功】予約完了画面の表示を確認しました！")
             return True
             
-        if any(err in body_text for err in ["無効", "正しくありません", "期限切れ", "エラー"]):
-            print(f"  -> 【エラー】認証コードまたは送信処理でエラーが発生しました。")
+        if "error" in current_url or any(err in body_text for err in ["無効", "正しくありません", "期限切れ", "エラー"]):
+            print(f"  -> 【エラー】画面遷移中にエラーが発生しました。（URL: {current_url}）")
             page.screenshot(path="error_otp_failed.png")
             return False
             
