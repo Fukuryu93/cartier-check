@@ -55,7 +55,7 @@ USER_INFO = {
 }
 
 TARGET_DAY = 10
-TARGET_TIME = "16:00"
+TARGET_TIME = "15:00"
 
 def send_discord_notification(message):
     if not DISCORD_WEBHOOK_URL:
@@ -90,7 +90,6 @@ def click_next_if_exists(page, timeout=3000):
 
 def fetch_verification_code_from_gmail(timeout_sec=60):
     print("  -> Gmailから【カルティエ専用】最新の新着認証コードメールを受信監視中...")
-    # 監視開始時刻を取得 (これより古いメールは無視)
     monitor_start_time = datetime.now(timezone.utc)
     start_time = time.time()
     
@@ -100,32 +99,27 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
             mail.login(USER_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
             mail.select("inbox")
             
-            # 送信元または件名で検索
             status, messages = mail.search(None, '(FROM "noreply@mail.myboutique.pro")')
             if status != "OK" or not messages[0]:
                 status, messages = mail.search(None, '(SUBJECT "カルティエ")')
             
             if status == "OK" and messages[0]:
                 email_ids = messages[0].split()
-                # 配列の末尾（最新順）から確認
                 for email_id in reversed(email_ids[-5:]):
                     status, msg_data = mail.fetch(email_id, "(RFC822)")
                     for response_part in msg_data:
                         if isinstance(response_part, tuple):
                             msg = email.message_from_bytes(response_part[1])
                             
-                            # 1. 受信日時のチェック（監視開始より前に届いた過去メールはスキップ）
                             date_hdr = msg.get("Date")
                             if date_hdr:
                                 try:
                                     msg_date = parsedate_to_datetime(date_hdr)
-                                    # サーバー間の時刻ズレ考慮（5秒許容）
                                     if msg_date < monitor_start_time - timedelta(seconds=5):
                                         continue
                                 except Exception:
                                     pass
 
-                            # 2. 差出人・件名のダブルチェック
                             from_hdr = str(msg.get("From", ""))
                             subject_hdr = str(msg.get("Subject", ""))
                             
