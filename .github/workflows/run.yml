@@ -2,10 +2,12 @@ name: Cartier Reservation Checker
 
 on:
   schedule:
-    # 最短設定：5分おきに実行
     - cron: '*/5 * * * *'
-  # GitHubの画面から手動で即時実行できるボタンも用意
   workflow_dispatch:
+
+# ワークフローを自ら無効化するための権限設定
+permissions:
+  actions: write
 
 jobs:
   check-and-reserve:
@@ -34,3 +36,11 @@ jobs:
           USER_EMAIL: ${{ secrets.USER_EMAIL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python main.py
+
+      - name: 予約完了時に次回以降の監視を自動無効化
+        if: always() && hashFiles('reservation_success.txt') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "【予約完了】完了フラグを検知しました。次回以降の自動監視をストップします。"
+          gh workflow disable "${{ github.workflow }}"
