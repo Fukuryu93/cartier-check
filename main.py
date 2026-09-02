@@ -55,7 +55,7 @@ USER_INFO = {
 }
 
 TARGET_DAY = 10
-TARGET_TIME = "15:00"
+TARGET_TIME = "18:00"
 
 def send_discord_notification(message):
     if not DISCORD_WEBHOOK_URL:
