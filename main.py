@@ -36,13 +36,12 @@ FIRST_NAME = name_parts[1] if len(name_parts) > 1 else ""
 
 TARGET_URL = "https://mycartiervisit.jp/cartier/terms-or-services"
 
+# 東京都の指定4店舗のみ
 STORE_PRIORITY = [
-    "カルティエ心斎橋ブティック",
-    "カルティエ ブティック 大丸心斎橋店",
-    "カルティエブティック髙島屋大阪店",
-    "カルティエブティック阪急うめだ本店",
-    "カルティエブティック阪急うめだ本店１階",
-    "カルティエブティック近鉄あべのハルカス店"
+    "カルティエ 銀座4丁目ブティック",
+    "カルティエ 銀座並木通りブティック",
+    "カルティエ ブティック GINZA SIX店",
+    "カルティエ ブティック 六本木ヒルズ店"
 ]
 
 USER_INFO = {
@@ -54,8 +53,9 @@ USER_INFO = {
     "party_size": "パートナーと"
 }
 
-TARGET_DAY = 10
-TARGET_TIME = "16:00"
+# 10月11日(日) 12:00 設定
+TARGET_DAY = 11
+TARGET_TIME = "12:00"
 
 def send_discord_notification(message):
     if not DISCORD_WEBHOOK_URL:
@@ -371,7 +371,7 @@ def complete_reservation(page, store_name, target_day=None, target_time=None):
                 success_msg = (
                     f"🎉 **【カルティエ来店予約 完全完了！】**\n"
                     f"**店舗:** {store_name}\n"
-                    f"**日時:** {selected_day_str} {chosen_time_str}\n"
+                    f"**日時:** 10月{selected_day_str} {chosen_time_str}\n"
                     f"**お名前:** {USER_INFO['last_name']} {USER_INFO['first_name']} 様\n"
                 )
                 print("\n" + success_msg + "\n")
@@ -442,12 +442,13 @@ def setup_page_to_stores(page):
         except Exception:
             pass
 
-    osaka_candidates = [
-        page.get_by_text("大阪府", exact=False).first,
-        page.locator("xpath=//*[contains(text(), '大阪府')]").first
+    # 東京都の選択
+    tokyo_candidates = [
+        page.get_by_text("東京都", exact=False).first,
+        page.locator("xpath=//*[contains(text(), '東京都')]").first
     ]
 
-    for loc in osaka_candidates:
+    for loc in tokyo_candidates:
         try:
             loc.scroll_into_view_if_needed(timeout=2000)
             if loc.is_visible(timeout=2000):
@@ -458,7 +459,7 @@ def setup_page_to_stores(page):
             continue
 
 def main():
-    print("監視実行を開始します...")
+    print("監視実行を開始します（対象：東京都 4店舗）...")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -510,3 +511,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
