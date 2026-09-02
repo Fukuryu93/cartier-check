@@ -55,7 +55,7 @@ USER_INFO = {
 }
 
 TARGET_DAY = 10
-TARGET_TIME = "18:00"
+TARGET_TIME = "13:00"
 
 def send_discord_notification(message):
     if not DISCORD_WEBHOOK_URL:
@@ -100,7 +100,6 @@ def click_confirm_button(page, timeout=3000):
         try:
             count = loc.count()
             if count > 0:
-                # 画面上の「最後」の要素（＝説明文ではなく右下のボタン）を指定
                 target = loc.last
                 if target.is_visible(timeout=timeout):
                     target.scroll_into_view_if_needed()
@@ -253,44 +252,28 @@ def handle_verification_code(page):
 
     time.sleep(1.5)
 
-    # 認証画面でのボタンクリック処理
+    # 認証画面での最終送信ボタンクリック
     if not click_confirm_button(page):
         click_next_if_exists(page)
 
-    # --- 認証コード送信後の追加フロー ---
-    print("  -> 認証コード送信後の画面遷移を待機中...")
-    time.sleep(3)
-
-    # ステップ1: 追加情報画面 (/cartier/additional-info) で「次へ」をクリック
-    print("  -> [1/3] 追加情報画面を通過。「次へ」をクリックします...")
-    click_next_if_exists(page, timeout=5000)
-    time.sleep(2.5)
-
-    # ステップ2: 最終確認画面 (/cartier/confirm) で「予約確定」をクリック
-    print("  -> [2/3] 最終確認画面に到達。「予約確定」ボタンをクリックします...")
-    if not click_confirm_button(page, timeout=5000):
-        print("  -> 予約確定ボタンの判定に失敗したため、「次へ」を試行します...")
-        click_next_if_exists(page, timeout=3000)
-
-    # ステップ3: 予約完了画面 (/cartier/thank-you) への遷移を確認
-    print("  -> [3/3] 予約完了画面(thank-you)への遷移を確認中...")
-    try:
-        page.wait_for_load_state("networkidle", timeout=10000)
-    except Exception:
-        pass
+    # 認証コード送信後は余計なボタンを押さず、完了画面への遷移だけを待機する
+    print("  -> 予約完了画面(thank-you)への遷移を確認中...")
     
-    for _ in range(12):
-        body_text = page.inner_text("body")
-        current_url = page.url
-        
-        if "thank-you" in current_url or any(kw in body_text for kw in ["予約が完了", "ご予約ありがとうございます", "完了いたしました", "受付いたしました"]):
-            print("  -> 【確定成功】予約完了画面の表示を確認しました！")
-            return True
+    for _ in range(15):
+        try:
+            body_text = page.inner_text("body")
+            current_url = page.url
             
-        if "error" in current_url or any(err in body_text for err in ["無効", "正しくありません", "期限切れ", "エラー"]):
-            print(f"  -> 【エラー】画面遷移中にエラーが発生しました。（URL: {current_url}）")
-            page.screenshot(path="error_otp_failed.png")
-            return False
+            if "thank-you" in current_url or any(kw in body_text for kw in ["予約が完了", "ご予約ありがとうございます", "完了いたしました", "受付いたしました"]):
+                print("  -> 【確定成功】予約完了画面の表示を確認しました！")
+                return True
+                
+            if "error" in current_url or any(err in body_text for err in ["無効", "正しくありません", "期限切れ"]):
+                print(f"  -> 【エラー】画面遷移中にエラーが発生しました。（URL: {current_url}）")
+                page.screenshot(path="error_otp_failed.png")
+                return False
+        except Exception:
+            pass
             
         time.sleep(1)
 
