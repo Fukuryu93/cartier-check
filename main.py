@@ -36,7 +36,7 @@ FIRST_NAME = name_parts[1] if len(name_parts) > 1 else ""
 
 TARGET_URL = "https://mycartiervisit.jp/cartier/terms-or-services"
 
-# 東京都の指定4店舗のみ
+# 東京都の指定4店舗
 STORE_PRIORITY = [
     "カルティエ 銀座4丁目ブティック",
     "カルティエ 銀座並木通りブティック",
@@ -53,7 +53,7 @@ USER_INFO = {
     "party_size": "パートナーと"
 }
 
-# 10月11日(日) 12:00 設定
+# 10月11日(日) 本命 12:00 設定
 TARGET_DAY = 11
 TARGET_TIME = "12:00"
 
@@ -252,11 +252,9 @@ def handle_verification_code(page):
 
     time.sleep(1.5)
 
-    # 認証画面での最終送信ボタンクリック
     if not click_confirm_button(page):
         click_next_if_exists(page)
 
-    # 認証コード送信後は完了画面への遷移だけを待機する
     print("  -> 予約完了画面(thank-you)への遷移を確認中...")
     
     for _ in range(15):
@@ -281,7 +279,7 @@ def handle_verification_code(page):
     page.screenshot(path="error_not_completed.png")
     return False
 
-def complete_reservation(page, store_name, target_day=None, target_time=None):
+def process_store_reservation(page, store_name, target_day=None, target_time="12:00"):
     time_pattern = re.compile(r"^\d{1,2}:\d{2}$")
     
     date_elements = page.locator("button, [role='button'], li, div").all()
@@ -308,7 +306,7 @@ def complete_reservation(page, store_name, target_day=None, target_time=None):
 
     if not target_date_el:
         print(f"  -> 指定/選択可能な日付が見つかりませんでした (Target: {target_day})")
-        return False
+        return "NO_SLOT", []
 
     print(f"  -> 日付 [{selected_day_str}] を選択します...")
     target_date_el.click()
@@ -320,76 +318,90 @@ def complete_reservation(page, store_name, target_day=None, target_time=None):
         time.sleep(1.5)
 
     time_options = page.get_by_text(time_pattern).all()
+    available_times = []
     chosen_time_el = None
-    chosen_time_str = ""
 
     for t_el in time_options:
         try:
             if t_el.is_visible():
                 t_text = t_el.inner_text().strip()
-                if target_time is None or t_text == target_time:
+                if t_text not in available_times:
+                    available_times.append(t_text)
+                if t_text == target_time:
                     chosen_time_el = t_el
-                    chosen_time_str = t_text
-                    break
         except Exception:
             continue
 
-    if not chosen_time_el:
-        print(f"  -> 指定/選択可能な時間が見つかりませんでした (Target: {target_time})")
-        return False
+    if not available_times:
+        print(f"  -> 選択可能な時間がありませんでした")
+        return "NO_SLOT", []
 
-    print(f"  -> 時間 [{chosen_time_str}] を選択します...")
-    chosen_time_el.click()
-    time.sleep(1)
-
-    click_next_if_exists(page)
-    time.sleep(2)
-
-    fill_customer_info(page)
-    click_next_if_exists(page)
-    time.sleep(2)
-
-    print("  -> ご相談内容画面を通過中...")
-    click_next_if_exists(page)
-    time.sleep(2)
-
-    print("  -> 予約内容確認画面。「予約確定」ボタンを検索・クリックします...")
-    if not click_confirm_button(page):
-        print("  -> 【エラー】「予約確定」ボタンが見つかりませんでした。")
-        page.screenshot(path="error_no_confirm_btn.png")
-        return False
-
-    print("  -> 認証コード入力画面への移行を確認中...")
-    for i in range(10):
-        body_text = page.inner_text("body")
-        inputs = page.locator("input:visible").all()
-        
-        if ("認証" in body_text or "コード" in body_text) and len(inputs) in [1, 4]:
-            print("  -> 【成功】認証コード入力画面に到達しました！")
-            success = handle_verification_code(page)
-            if success:
-                success_msg = (
-                    f"🎉 **【カルティエ来店予約 完全完了！】**\n"
-                    f"**店舗:** {store_name}\n"
-                    f"**日時:** 10月{selected_day_str} {chosen_time_str}\n"
-                    f"**お名前:** {USER_INFO['last_name']} {USER_INFO['first_name']} 様\n"
-                )
-                print("\n" + success_msg + "\n")
-                send_discord_notification(success_msg)
-                return True
-            else:
-                return False
-            break
-        
-        error_el = page.locator(".error, .error-message, [class*='error'], [class*='invalid']").first
-        if error_el.is_visible(timeout=500):
-            print(f"  -> 【画面上エラー検知】: {error_el.inner_text().strip()}")
-            
+    # 本命の時間（12:00）が存在する場合 -> 自動予約を実行
+    if chosen_time_el:
+        print(f"  -> 本命時間 [{target_time}] の空きを発見！自動予約手続きを開始します...")
+        chosen_time_el.click()
         time.sleep(1)
 
-    print(f"  -> 認証画面へ到達できませんでした。（現在のURL: {page.url}）")
-    page.screenshot(path="error_failed_to_auth_page.png")
-    return False
+        click_next_if_exists(page)
+        time.sleep(2)
+
+        fill_customer_info(page)
+        click_next_if_exists(page)
+        time.sleep(2)
+
+        print("  -> ご相談内容画面を通過中...")
+        click_next_if_exists(page)
+        time.sleep(2)
+
+        print("  -> 予約内容確認画面。「予約確定」ボタンを検索・クリックします...")
+        if not click_confirm_button(page):
+            print("  -> 【エラー】「予約確定」ボタンが見つかりませんでした。")
+            page.screenshot(path="error_no_confirm_btn.png")
+            return "ERROR", available_times
+
+        print("  -> 認証コード入力画面への移行を確認中...")
+        for i in range(10):
+            body_text = page.inner_text("body")
+            inputs = page.locator("input:visible").all()
+            
+            if ("認証" in body_text or "コード" in body_text) and len(inputs) in [1, 4]:
+                print("  -> 【成功】認証コード入力画面に到達しました！")
+                success = handle_verification_code(page)
+                if success:
+                    success_msg = (
+                        f"🎉 **【カルティエ来店予約 完全完了！】**\n"
+                        f"**店舗:** {store_name}\n"
+                        f"**日時:** 10月{selected_day_str} {target_time}\n"
+                        f"**お名前:** {USER_INFO['last_name']} {USER_INFO['first_name']} 様\n"
+                    )
+                    print("\n" + success_msg + "\n")
+                    send_discord_notification(success_msg)
+                    
+                    try:
+                        with open("reservation_success.txt", "w") as f:
+                            f.write("SUCCESS")
+                    except Exception as e:
+                        print(f"  [フラグファイル作成エラー] {e}")
+
+                    return "RESERVED", available_times
+                else:
+                    return "ERROR", available_times
+                break
+            
+            error_el = page.locator(".error, .error-message, [class*='error'], [class*='invalid']").first
+            if error_el.is_visible(timeout=500):
+                print(f"  -> 【画面上エラー検知】: {error_el.inner_text().strip()}")
+                
+            time.sleep(1)
+
+        print(f"  -> 認証画面へ到達できませんでした。（現在のURL: {page.url}）")
+        page.screenshot(path="error_failed_to_auth_page.png")
+        return "ERROR", available_times
+
+    else:
+        # 12:00はないが別の時間が空いている場合
+        print(f"  -> 本命の {target_time} は満席ですが、別の時間帯に空き枠を発見しました: {available_times}")
+        return "OTHER_TIME_AVAILABLE", available_times
 
 def setup_page_to_stores(page):
     page.goto(TARGET_URL, wait_until="networkidle", timeout=60000)
@@ -460,7 +472,9 @@ def setup_page_to_stores(page):
 
 def main():
     print("監視実行を開始します（対象：東京都 4店舗）...")
-    
+    reserved_any = False
+    other_time_notifications = []
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
@@ -492,16 +506,37 @@ def main():
                     is_navigated = page.get_by_text("ご予約の日時", exact=False).is_visible(timeout=2500)
 
                     if is_navigated:
-                        print("  -> 画面遷移成功（予約枠あり）！全自動予約処理を開始します...")
-                        success = complete_reservation(page, store_name, target_day=TARGET_DAY, target_time=TARGET_TIME)
-                        if success:
-                            print("  [二重予約防止] 全自動予約が完了したため、スクリプトを終了します。")
+                        print("  -> 画面遷移成功（予約枠あり）！時間帯チェックを開始します...")
+                        status, available_times = process_store_reservation(page, store_name, target_day=TARGET_DAY, target_time=TARGET_TIME)
+                        
+                        if status == "RESERVED":
+                            reserved_any = True
+                            print("  [二重予約防止] 12:00の全自動予約が完了したため、スクリプトを終了します。")
                             sys.exit(0)
+                        elif status == "OTHER_TIME_AVAILABLE":
+                            times_str = ", ".join(available_times)
+                            other_time_notifications.append(f"・**{store_name}**: {times_str}")
                     else:
-                        print("  -> 遷移不可（満席）のため、次の店舗の確認へ移ります。")
+                        print("  -> 遷移不可（全枠満席）のため、次の店舗の確認へ移ります。")
 
                 except Exception as e:
                     print(f"  -> [{store_name}] のチェック中にエラー発生: {e}")
+
+            # 12:00の自動予約が実行されなかった場合の各種Discord通知
+            if not reserved_any:
+                if other_time_notifications:
+                    msg = (
+                        f"🔔 **【10月11日(日) 他の時間帯に空きを発見！】**\n"
+                        f"本命の12:00は満席ですが、以下の店舗・時間帯に空き枠があります：\n\n"
+                        + "\n".join(other_time_notifications) + "\n\n"
+                        f"※本命（12:00）の監視と自動予約処理は継続します。"
+                    )
+                    print("\n" + msg)
+                    send_discord_notification(msg)
+                else:
+                    no_slot_msg = f"ℹ️ 【定期チェック】現在、指定4店舗（10/11 全時間帯）の空き枠はありませんでした。監視を継続します。"
+                    print("\n" + no_slot_msg)
+                    send_discord_notification(no_slot_msg)
 
         except Exception as e:
             print(f"実行中にエラーが発生しました: {e}")
