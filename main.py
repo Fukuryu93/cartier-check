@@ -5,7 +5,7 @@ import re
 import email
 import imaplib
 from email.utils import parsedate_to_datetime
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 import requests
 
@@ -89,7 +89,8 @@ def click_next_if_exists(page, timeout=3000):
     return False
 
 def fetch_verification_code_from_gmail(timeout_sec=60):
-    print("  -> Gmailから【カルティエ専用】最新の認証コードメールを受信監視中...")
+    print("  -> Gmailから【カルティエ専用】最新の新着認証コードメールを受信監視中...")
+    # 監視開始時刻を取得 (これより古いメールは無視)
     monitor_start_time = datetime.now(timezone.utc)
     start_time = time.time()
     
@@ -99,23 +100,32 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
             mail.login(USER_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
             mail.select("inbox")
             
-            # 1. カルティエの送信元アドレス（noreply@mail.myboutique.pro）で検索
+            # 送信元または件名で検索
             status, messages = mail.search(None, '(FROM "noreply@mail.myboutique.pro")')
-            
-            # 見つからなければ件名「カルティエ」で検索
             if status != "OK" or not messages[0]:
                 status, messages = mail.search(None, '(SUBJECT "カルティエ")')
             
             if status == "OK" and messages[0]:
                 email_ids = messages[0].split()
-                # 最新のメール（配列の末尾）から順に確認
+                # 配列の末尾（最新順）から確認
                 for email_id in reversed(email_ids[-5:]):
                     status, msg_data = mail.fetch(email_id, "(RFC822)")
                     for response_part in msg_data:
                         if isinstance(response_part, tuple):
                             msg = email.message_from_bytes(response_part[1])
                             
-                            # 2. 差出人・件名のダブルチェック（関係ないメールを完全除外）
+                            # 1. 受信日時のチェック（監視開始より前に届いた過去メールはスキップ）
+                            date_hdr = msg.get("Date")
+                            if date_hdr:
+                                try:
+                                    msg_date = parsedate_to_datetime(date_hdr)
+                                    # サーバー間の時刻ズレ考慮（5秒許容）
+                                    if msg_date < monitor_start_time - timedelta(seconds=5):
+                                        continue
+                                except Exception:
+                                    pass
+
+                            # 2. 差出人・件名のダブルチェック
                             from_hdr = str(msg.get("From", ""))
                             subject_hdr = str(msg.get("Subject", ""))
                             
@@ -133,10 +143,8 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
                             else:
                                 body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
                             
-                            # 3. HTMLタグやノイズを除去
                             clean_text = re.sub(r'<[^>]+>', ' ', body)
                             
-                            # 4. カルティエ専用フレーズ「認証コードはXXXXになります」から4桁数字を抽出
                             match = re.search(r"認証コード[は:：\s]*(\d{4})", clean_text)
                             if not match:
                                 match = re.search(r"コード[は:：\s]*(\d{4})", clean_text)
@@ -144,7 +152,7 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
                             if match:
                                 code = match.group(1)
                                 mail.logout()
-                                print(f"  -> 【カルティエ公式メールから抽出成功】認証コード: {code}")
+                                print(f"  -> 【新着メールから抽出成功】認証コード: {code}")
                                 return code
             mail.logout()
         except Exception as e:
@@ -152,11 +160,10 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
         
         time.sleep(3)
     
-    print("  -> タイムアウト: カルティエからの認証コードメールを受信できませんでした。")
+    print("  -> タイムアウト: 監視開始後に送信された認証コードメールを受信できませんでした。")
     return None
 
 def fill_customer_info(page):
-    """1文字ずつ入力してバリデーションを通過させる"""
     print("  -> お客様情報を自動入力中...")
     page.wait_for_load_state("domcontentloaded")
     time.sleep(1)
@@ -193,7 +200,7 @@ def handle_verification_code(page):
         print("  -> 認証コードの取得に失敗しました。")
         return False
     
-    time.sleep(1.5)  # 画面と入力欄の安定待ち
+    time.sleep(1.5)
     
     inputs = page.locator("input:visible").all()
     print(f"  -> 検出されたコード入力欄の数: {len(inputs)}")
@@ -203,7 +210,6 @@ def handle_verification_code(page):
         page.screenshot(path="error_no_otp_input.png")
         return False
 
-    # --- 1. タップ(click)・フォーカスを行ってから入力 ---
     try:
         if len(inputs) == len(code):
             for i, digit in enumerate(code):
@@ -230,7 +236,6 @@ def handle_verification_code(page):
 
     time.sleep(1.5)
 
-    # --- 2. 認証実行ボタンの特定とクリック ---
     confirm_keywords = ["認証", "確認", "送信", "予約確定", "完了", "予約を確定"]
     clicked = False
     
@@ -256,7 +261,6 @@ def handle_verification_code(page):
             page.screenshot(path="error_otp_submit_btn.png")
             return False
 
-    # --- 3. 実際の予約完了画面の表示チェック ---
     print("  -> 予約完了画面への遷移を確認中...")
     try:
         page.wait_for_load_state("networkidle", timeout=10000)
