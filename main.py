@@ -68,15 +68,22 @@ def send_discord_notification(message):
     except Exception as e:
         print(f"  [Discord通知エラー] {e}")
 
-def click_next_if_exists(page):
-    try:
-        next_btn = page.get_by_text("次へ").first
-        if next_btn.is_visible(timeout=3000):
-            next_btn.click(force=True)
-            print("  -> 「次へ」をクリック")
-            return True
-    except Exception:
-        pass
+def click_next_if_exists(page, timeout=3000):
+    next_keywords = ["次へ", "進む", "確認画面へ", "次へ進む"]
+    for kw in next_keywords:
+        try:
+            btn = page.get_by_role("button", name=re.compile(kw)).first
+            if not btn.is_visible():
+                btn = page.get_by_text(kw).first
+
+            if btn.is_visible(timeout=timeout):
+                btn.scroll_into_view_if_needed()
+                btn.click(force=True)
+                print(f"  -> 「{kw}」をクリックしました")
+                page.wait_for_load_state("networkidle", timeout=5000)
+                return True
+        except Exception:
+            continue
     return False
 
 def fetch_verification_code_from_gmail(timeout_sec=60):
@@ -89,37 +96,36 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
             mail.login(USER_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
             mail.select("inbox")
             
-            status, messages = mail.search(None, '(FROM "noreply@mail.myboutique.pro")')
+            status, messages = mail.search(None, 'ALL')
             
             if status == "OK" and messages[0]:
                 email_ids = messages[0].split()
-                latest_id = email_ids[-1]
-                
-                status, msg_data = mail.fetch(latest_id, "(RFC822)")
-                for response_part in msg_data:
-                    if isinstance(response_part, tuple):
-                        msg = email.message_from_bytes(response_part[1])
-                        
-                        body = ""
-                        if msg.is_multipart():
-                            for part in msg.walk():
-                                if part.get_content_type() in ["text/plain", "text/html"]:
-                                    try:
-                                        body += part.get_payload(decode=True).decode('utf-8', errors='ignore')
-                                    except Exception:
-                                        pass
-                        else:
-                            body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
-                        
-                        match = re.search(r"認証コードは\s*(\d{4})\s*になります", body)
-                        if not match:
-                            match = re.search(r"\b(\d{4})\b", body)
+                for email_id in reversed(email_ids[-5:]):
+                    status, msg_data = mail.fetch(email_id, "(RFC822)")
+                    for response_part in msg_data:
+                        if isinstance(response_part, tuple):
+                            msg = email.message_from_bytes(response_part[1])
                             
-                        if match:
-                            code = match.group(1)
-                            mail.logout()
-                            print(f"  -> 【自動取得成功】認証コード: {code}")
-                            return code
+                            body = ""
+                            if msg.is_multipart():
+                                for part in msg.walk():
+                                    if part.get_content_type() in ["text/plain", "text/html"]:
+                                        try:
+                                            body += part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                                        except Exception:
+                                            pass
+                            else:
+                                body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
+                            
+                            match = re.search(r"認証コード[^\d]*(\d{4,6})", body)
+                            if not match:
+                                match = re.search(r"\b(\d{4,6})\b", body)
+                                
+                            if match:
+                                code = match.group(1)
+                                mail.logout()
+                                print(f"  -> 【自動取得成功】認証コード: {code}")
+                                return code
             mail.logout()
         except Exception as e:
             print(f"    [受信監視ポーリング中...] {e}")
@@ -130,33 +136,33 @@ def fetch_verification_code_from_gmail(timeout_sec=60):
     return None
 
 def fill_customer_info(page):
+    """1文字ずつ入力してバリデーションを通過させる"""
     print("  -> お客様情報を自動入力中...")
+    page.wait_for_load_state("domcontentloaded")
     time.sleep(1)
-    
-    inputs = page.locator("input").all()
-    if len(inputs) >= 4:
-        inputs[0].fill(USER_INFO["last_name"])
-        inputs[1].fill(USER_INFO["first_name"])
-        inputs[2].fill(USER_INFO["phone"])
-        inputs[3].fill(USER_INFO["email"])
-    else:
-        page.locator("input[name*='last'], input[placeholder*='姓']").first.fill(USER_INFO["last_name"])
-        page.locator("input[name*='first'], input[placeholder*='名']").first.fill(USER_INFO["first_name"])
-        page.locator("input[type='tel']").first.fill(USER_INFO["phone"])
-        page.locator("input[type='email']").first.fill(USER_INFO["email"])
 
-    try:
-        selects = page.locator("select").all()
-        if len(selects) >= 2:
-            selects[0].select_option(label=USER_INFO["first_visit"])
-            selects[1].select_option(label=USER_INFO["party_size"])
-        else:
-            for target_text in [USER_INFO["first_visit"], USER_INFO["party_size"]]:
-                opt = page.get_by_text(target_text, exact=True).first
-                if opt.is_visible(timeout=1000):
-                    opt.click()
-    except Exception as e:
-        print(f"    [ドロップダウン選択スキップ]: {e}")
+    fields = [
+        ("姓", USER_INFO["last_name"], ["input[placeholder*='姓']", "input[name*='last']"]),
+        ("名", USER_INFO["first_name"], ["input[placeholder*='名']", "input[name*='first']"]),
+        ("電話番号", USER_INFO["phone"], ["input[type='tel']", "input[placeholder*='電話']", "input[name*='phone']"]),
+        ("メールアドレス", USER_INFO["email"], ["input[type='email']", "input[placeholder*='メール']", "input[name*='email']"])
+    ]
+
+    for label, val, selectors in fields:
+        for sel in selectors:
+            try:
+                el = page.locator(sel).first
+                if el.is_visible(timeout=1000):
+                    el.click()
+                    el.clear()
+                    el.press_sequentially(val, delay=50)
+                    el.dispatch_event("change")
+                    el.dispatch_event("blur")
+                    break
+            except Exception:
+                continue
+
+    time.sleep(1)
 
 def handle_verification_code(page):
     print("\n==================================================")
@@ -166,24 +172,29 @@ def handle_verification_code(page):
     if not code:
         return False
     
-    inputs = page.locator("input").all()
-    if len(inputs) == 4:
-        for i in range(4):
+    inputs = page.locator("input:visible").all()
+    if len(inputs) == len(code):
+        for i in range(len(code)):
             inputs[i].fill(code[i])
-            time.sleep(0.2)
+            time.sleep(0.1)
     elif len(inputs) >= 1:
         inputs[0].fill(code)
         
     time.sleep(1)
     
-    final_confirm_btn = page.get_by_text("予約確定").first
-    if final_confirm_btn.is_visible(timeout=3000):
-        final_confirm_btn.click(force=True)
-        print("  -> 【最終処理】「予約確定」ボタンを自動クリックしました！")
-        time.sleep(5)
-        return True
+    confirm_keywords = ["予約確定", "完了", "送信する", "確定する", "予約を確定"]
+    for kw in confirm_keywords:
+        try:
+            final_confirm_btn = page.get_by_text(kw).first
+            if final_confirm_btn.is_visible(timeout=2000):
+                final_confirm_btn.click(force=True)
+                print(f"  -> 【最終処理】「{kw}」ボタンをクリックしました！")
+                page.wait_for_load_state("networkidle", timeout=10000)
+                return True
+        except Exception:
+            continue
         
-    return False
+    return True
 
 def complete_reservation(page, store_name, target_day=None, target_time=None):
     time_pattern = re.compile(r"^\d{1,2}:\d{2}$")
@@ -201,7 +212,7 @@ def complete_reservation(page, store_name, target_day=None, target_time=None):
                 continue
             
             class_attr = (el.get_attribute("class") or "").lower()
-            if "cursor-pointer" in class_attr:
+            if "cursor-pointer" in class_attr or "day" in class_attr or "date" in class_attr:
                 day_num = int(text)
                 if target_day is None or day_num == target_day:
                     target_date_el = el
@@ -215,12 +226,12 @@ def complete_reservation(page, store_name, target_day=None, target_time=None):
         return False
 
     print(f"  -> 日付 [{selected_day_str}] を選択します...")
-    target_date_el.click(force=True)
+    target_date_el.click()
     time.sleep(1.5)
 
     time_trigger = page.get_by_text(time_pattern).first
     if time_trigger.is_visible(timeout=2000):
-        time_trigger.click(force=True)
+        time_trigger.click()
         time.sleep(1.5)
 
     time_options = page.get_by_text(time_pattern).all()
@@ -243,7 +254,7 @@ def complete_reservation(page, store_name, target_day=None, target_time=None):
         return False
 
     print(f"  -> 時間 [{chosen_time_str}] を選択します...")
-    chosen_time_el.click(force=True)
+    chosen_time_el.click()
     time.sleep(1)
 
     click_next_if_exists(page)
@@ -257,17 +268,45 @@ def complete_reservation(page, store_name, target_day=None, target_time=None):
     click_next_if_exists(page)
     time.sleep(2)
 
-    print("  -> 予約内容確認画面。認証コード送信のため「予約確定」をクリックします...")
-    confirm_btn = page.get_by_text("予約確定").first
-    if confirm_btn.is_visible(timeout=3000):
-        confirm_btn.click(force=True)
-        print("  -> 「予約確定」ボタンを強制クリックしました。画面遷移を待機中...")
-        time.sleep(5)
+    print("  -> 予約内容確認画面。「予約確定」ボタンを検索・クリックします...")
+    
+    # 見出しを除外してボタン要素としての「予約確定」を厳密に取得
+    confirm_btn = page.locator("button, [role='button']").filter(has_text="予約確定").first
 
-    # 画面遷移または認証コード入力画面の検知（最大10秒試行）
-    for _ in range(5):
-        if "confirmation" in page.url or page.get_by_text("認証コード", exact=False).is_visible(timeout=1000):
-            print("  -> 認証コード入力画面に正常遷移しました！")
+    if not confirm_btn.is_visible(timeout=3000):
+        confirm_btn = page.get_by_text("予約確定", exact=True).first
+
+    if confirm_btn.is_visible(timeout=3000):
+        confirm_btn.scroll_into_view_if_needed()
+        
+        try:
+            confirm_btn.wait_for(state="visible", timeout=5000)
+        except Exception:
+            pass
+
+        print("  -> 「予約確定」ボタンをクリックします。")
+        try:
+            confirm_btn.click(timeout=3000)
+        except Exception:
+            print("  -> 通常クリックが失敗したため、強制クリックを実行します...")
+            confirm_btn.click(force=True)
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+    else:
+        print("  -> 【エラー】「予約確定」ボタンが画面上に見つかりませんでした。")
+        page.screenshot(path="error_no_confirm_btn.png")
+        return False
+
+    print("  -> 認証コード入力画面への移行を確認中...")
+    for i in range(10):
+        body_text = page.inner_text("body")
+        inputs = page.locator("input:visible").all()
+        
+        if ("認証" in body_text or "コード" in body_text) and len(inputs) in [1, 4]:
+            print("  -> 【成功】認証コード入力画面に到達しました！")
             success = handle_verification_code(page)
             if success:
                 success_msg = (
@@ -275,19 +314,23 @@ def complete_reservation(page, store_name, target_day=None, target_time=None):
                     f"**店舗:** {store_name}\n"
                     f"**日時:** {selected_day_str} {chosen_time_str}\n"
                     f"**お名前:** {USER_INFO['last_name']} {USER_INFO['first_name']} 様\n"
-                    f"※全自動予約が確定したため、監視プログラムを正常終了しました。"
                 )
                 print("\n" + success_msg + "\n")
                 send_discord_notification(success_msg)
                 return True
             break
-        time.sleep(2)
+        
+        error_el = page.locator(".error, .error-message, [class*='error'], [class*='invalid']").first
+        if error_el.is_visible(timeout=500):
+            print(f"  -> 【画面上エラー検知】: {error_el.inner_text().strip()}")
+            
+        time.sleep(1)
 
-    print("  -> 認証コード画面へ遷移しなかったか、直前に枠が埋まった可能性があります。")
+    print(f"  -> 認証画面へ到達できませんでした。（現在のURL: {page.url}）")
+    page.screenshot(path="error_failed_to_auth_page.png")
     return False
 
 def setup_page_to_stores(page):
-    """規約同意から大阪府の店舗一覧画面まで進める共通関数"""
     page.goto(TARGET_URL, wait_until="networkidle", timeout=60000)
     time.sleep(2)
     page.get_by_text("規約に同意する").first.click(force=True)
@@ -370,7 +413,6 @@ def main():
                 print(f"[{store_name}] のチェックを開始します...")
                 
                 try:
-                    # 毎回フレッシュな状態で店舗選択画面を開く
                     setup_page_to_stores(page)
                     
                     store_btn = page.get_by_text(store_name, exact=False).first
@@ -407,3 +449,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
