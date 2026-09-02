@@ -88,6 +88,29 @@ def click_next_if_exists(page, timeout=3000):
             continue
     return False
 
+def click_confirm_button(page, timeout=3000):
+    """説明文を避けて右下の『予約確定』ボタンを狙い撃ちクリックする関数"""
+    selectors = [
+        page.locator("button, a, [role='button'], input[type='submit']").filter(has_text=re.compile(r"予約確定")),
+        page.get_by_role("button", name=re.compile(r"予約確定")),
+        page.get_by_text(re.compile(r"予約確定"))
+    ]
+    
+    for loc in selectors:
+        try:
+            count = loc.count()
+            if count > 0:
+                # 画面上の「最後」の要素（＝説明文ではなく右下のボタン）を指定
+                target = loc.last
+                if target.is_visible(timeout=timeout):
+                    target.scroll_into_view_if_needed()
+                    target.click(force=True)
+                    print("  -> 右下の「予約確定」ボタンをクリックしました。")
+                    return True
+        except Exception:
+            continue
+    return False
+
 def fetch_verification_code_from_gmail(timeout_sec=60):
     print("  -> Gmailから【カルティエ専用】最新の新着認証コードメールを受信監視中...")
     monitor_start_time = datetime.now(timezone.utc)
@@ -230,30 +253,9 @@ def handle_verification_code(page):
 
     time.sleep(1.5)
 
-    confirm_keywords = ["認証", "確認", "送信", "予約確定", "完了", "予約を確定"]
-    clicked = False
-    
-    for kw in confirm_keywords:
-        try:
-            btn = page.locator("button, [role='button'], input[type='submit']").filter(has_text=kw).first
-            if btn.is_visible(timeout=1000):
-                btn.scroll_into_view_if_needed()
-                btn.click()
-                print(f"  -> 【認証コード送信】「{kw}」ボタンをクリックしました。")
-                clicked = True
-                break
-        except Exception:
-            continue
-            
-    if not clicked:
-        try:
-            btn = page.locator("button:visible, input[type='submit']:visible").first
-            btn.click(force=True)
-            print("  -> 【認証コード送信】可視ボタンを強制クリックしました。")
-        except Exception as e:
-            print(f"  -> 【エラー】送信ボタンのクリックに失敗しました: {e}")
-            page.screenshot(path="error_otp_submit_btn.png")
-            return False
+    # 認証画面でのボタンクリック処理
+    if not click_confirm_button(page):
+        click_next_if_exists(page)
 
     # --- 認証コード送信後の追加フロー ---
     print("  -> 認証コード送信後の画面遷移を待機中...")
@@ -266,21 +268,8 @@ def handle_verification_code(page):
 
     # ステップ2: 最終確認画面 (/cartier/confirm) で「予約確定」をクリック
     print("  -> [2/3] 最終確認画面に到達。「予約確定」ボタンをクリックします...")
-    confirm_btn = page.locator("button, [role='button']").filter(has_text="予約確定").first
-
-    if not confirm_btn.is_visible(timeout=3000):
-        confirm_btn = page.get_by_text("予約確定", exact=True).first
-
-    if confirm_btn.is_visible(timeout=3000):
-        confirm_btn.scroll_into_view_if_needed()
-        try:
-            confirm_btn.click(timeout=3000)
-            print("  -> 「予約確定」ボタンをクリックしました。")
-        except Exception:
-            print("  -> 通常クリック失敗のため、強制クリックを実行します...")
-            confirm_btn.click(force=True)
-    else:
-        print("  -> 「予約確定」ボタンが見つからないため、「次へ」ボタンを試行します...")
+    if not click_confirm_button(page, timeout=5000):
+        print("  -> 予約確定ボタンの判定に失敗したため、「次へ」を試行します...")
         click_next_if_exists(page, timeout=3000)
 
     # ステップ3: 予約完了画面 (/cartier/thank-you) への遷移を確認
@@ -382,33 +371,8 @@ def complete_reservation(page, store_name, target_day=None, target_time=None):
     time.sleep(2)
 
     print("  -> 予約内容確認画面。「予約確定」ボタンを検索・クリックします...")
-    
-    confirm_btn = page.locator("button, [role='button']").filter(has_text="予約確定").first
-
-    if not confirm_btn.is_visible(timeout=3000):
-        confirm_btn = page.get_by_text("予約確定", exact=True).first
-
-    if confirm_btn.is_visible(timeout=3000):
-        confirm_btn.scroll_into_view_if_needed()
-        
-        try:
-            confirm_btn.wait_for(state="visible", timeout=5000)
-        except Exception:
-            pass
-
-        print("  -> 「予約確定」ボタンをクリックします。")
-        try:
-            confirm_btn.click(timeout=3000)
-        except Exception:
-            print("  -> 通常クリックが失敗したため、強制クリックを実行します...")
-            confirm_btn.click(force=True)
-
-        try:
-            page.wait_for_load_state("networkidle", timeout=8000)
-        except Exception:
-            pass
-    else:
-        print("  -> 【エラー】「予約確定」ボタンが画面上に見つかりませんでした。")
+    if not click_confirm_button(page):
+        print("  -> 【エラー】「予約確定」ボタンが見つかりませんでした。")
         page.screenshot(path="error_no_confirm_btn.png")
         return False
 
@@ -563,3 +527,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
