@@ -55,7 +55,7 @@ USER_INFO = {
 }
 
 TARGET_DAY = 10
-TARGET_TIME = "13:00"
+TARGET_TIME = "16:00"
 
 def send_discord_notification(message):
     if not DISCORD_WEBHOOK_URL:
@@ -256,7 +256,7 @@ def handle_verification_code(page):
     if not click_confirm_button(page):
         click_next_if_exists(page)
 
-    # 認証コード送信後は余計なボタンを押さず、完了画面への遷移だけを待機する
+    # 認証コード送信後は完了画面への遷移だけを待機する
     print("  -> 予約完了画面(thank-you)への遷移を確認中...")
     
     for _ in range(15):
@@ -510,4 +510,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
