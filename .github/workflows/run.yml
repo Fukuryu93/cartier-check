@@ -1,8 +1,6 @@
 name: Cartier Reservation Checker
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 # ワークフローを自ら無効化するための権限設定
