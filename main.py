@@ -8,6 +8,7 @@ from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 import requests
+import jpholiday
 
 # ======================================================================
 # GitHub Secrets（環境変数）から情報を取得
@@ -36,12 +37,16 @@ FIRST_NAME = name_parts[1] if len(name_parts) > 1 else ""
 
 TARGET_URL = "https://mycartiervisit.jp/cartier/terms-or-services"
 
-# 東京都の指定4店舗
+# 東京都の監視対象店舗（計8店舗）
 STORE_PRIORITY = [
     "カルティエ 銀座4丁目ブティック",
     "カルティエ 銀座並木通りブティック",
     "カルティエ ブティック GINZA SIX店",
-    "カルティエ ブティック 六本木ヒルズ店"
+    "カルティエ ブティック 六本木ヒルズ店",
+    "カルティエ ブティック 西武池袋本店",
+    "カルティエ ブティック 髙島屋新宿店",
+    "カルティエ ブティック 伊勢丹新宿本店",
+    "カルティエ ブティック 三越日本橋本店"
 ]
 
 USER_INFO = {
@@ -53,9 +58,9 @@ USER_INFO = {
     "party_size": "パートナーと"
 }
 
-# 10月11日(日) 本命 12:00 設定
-TARGET_DAY = 11
-TARGET_TIME = "12:00"
+# 希望の時間帯の範囲（土日祝の自動予約用）
+TARGET_START_HOUR = 11
+TARGET_END_HOUR = 18
 
 def send_discord_notification(message):
     if not DISCORD_WEBHOOK_URL:
@@ -69,6 +74,20 @@ def send_discord_notification(message):
             print(f"  [Discord通知失敗] Status: {res.status_code}")
     except Exception as e:
         print(f"  [Discord通知エラー] {e}")
+
+def is_weekend_or_holiday(day_int: int) -> bool:
+    """日付（数値）から土曜日・日曜日・日本の祝日であるかを判定する"""
+    try:
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        dt = datetime(current_year, current_month, day_int)
+        if dt.weekday() in [5, 6]:
+            return True
+        if jpholiday.is_holiday(dt):
+            return True
+    except Exception:
+        pass
+    return False
 
 def click_next_if_exists(page, timeout=3000):
     next_keywords = ["次へ", "進む", "確認画面へ", "次へ進む"]
@@ -89,7 +108,6 @@ def click_next_if_exists(page, timeout=3000):
     return False
 
 def click_confirm_button(page, timeout=3000):
-    """説明文を避けて右下の『予約確定』ボタンを狙い撃ちクリックする関数"""
     selectors = [
         page.locator("button, a, [role='button'], input[type='submit']").filter(has_text=re.compile(r"予約確定")),
         page.get_by_role("button", name=re.compile(r"予約確定")),
@@ -279,68 +297,34 @@ def handle_verification_code(page):
     page.screenshot(path="error_not_completed.png")
     return False
 
-def process_store_reservation(page, store_name, target_day=None, target_time="12:00"):
-    time_pattern = re.compile(r"^\d{1,2}:\d{2}$")
-    
-    date_elements = page.locator("button, [role='button'], li, div").all()
-    target_date_el = None
-    selected_day_str = ""
-
-    for el in date_elements:
-        try:
-            if not el.is_visible():
-                continue
-            text = el.inner_text().strip()
-            if not text.isdigit() or not (1 <= int(text) <= 31):
-                continue
-            
-            class_attr = (el.get_attribute("class") or "").lower()
-            if "cursor-pointer" in class_attr or "day" in class_attr or "date" in class_attr:
-                day_num = int(text)
-                if target_day is None or day_num == target_day:
-                    target_date_el = el
-                    selected_day_str = f"{day_num}日"
+def execute_booking(page, store_name, day_num, time_str):
+    """見つかった特定の店舗・日付・時間を指定して自動予約を完遂する関数"""
+    try:
+        print(f"  -> 【自動予約実行】{store_name} ({day_num}日 {time_str}) の予約手続きを進めます...")
+        
+        # 1. 日付の再選択
+        date_elements = page.locator("button, [role='button'], li, div").all()
+        for el in date_elements:
+            if el.is_visible() and el.inner_text().strip() == str(day_num):
+                class_attr = (el.get_attribute("class") or "").lower()
+                if "cursor-pointer" in class_attr or "day" in class_attr or "date" in class_attr:
+                    el.click()
+                    time.sleep(1.5)
                     break
-        except Exception:
-            continue
 
-    if not target_date_el:
-        print(f"  -> 指定/選択可能な日付が見つかりませんでした (Target: {target_day})")
-        return "NO_SLOT", []
+        # 2. 時間の選択
+        time_pattern = re.compile(r"^\d{1,2}:\d{2}$")
+        time_trigger = page.get_by_text(time_pattern).first
+        if time_trigger.is_visible(timeout=2000):
+            time_trigger.click()
+            time.sleep(1.0)
 
-    print(f"  -> 日付 [{selected_day_str}] を選択します...")
-    target_date_el.click()
-    time.sleep(1.5)
-
-    time_trigger = page.get_by_text(time_pattern).first
-    if time_trigger.is_visible(timeout=2000):
-        time_trigger.click()
-        time.sleep(1.5)
-
-    time_options = page.get_by_text(time_pattern).all()
-    available_times = []
-    chosen_time_el = None
-
-    for t_el in time_options:
-        try:
-            if t_el.is_visible():
-                t_text = t_el.inner_text().strip()
-                if t_text not in available_times:
-                    available_times.append(t_text)
-                if t_text == target_time:
-                    chosen_time_el = t_el
-        except Exception:
-            continue
-
-    if not available_times:
-        print(f"  -> 選択可能な時間がありませんでした")
-        return "NO_SLOT", []
-
-    # 本命の時間（12:00）が存在する場合 -> 自動予約を実行
-    if chosen_time_el:
-        print(f"  -> 本命時間 [{target_time}] の空きを発見！自動予約手続きを開始します...")
-        chosen_time_el.click()
-        time.sleep(1)
+        time_options = page.get_by_text(time_pattern).all()
+        for t_el in time_options:
+            if t_el.is_visible() and t_el.inner_text().strip() == time_str:
+                t_el.click()
+                time.sleep(1.0)
+                break
 
         click_next_if_exists(page)
         time.sleep(2)
@@ -357,7 +341,7 @@ def process_store_reservation(page, store_name, target_day=None, target_time="12
         if not click_confirm_button(page):
             print("  -> 【エラー】「予約確定」ボタンが見つかりませんでした。")
             page.screenshot(path="error_no_confirm_btn.png")
-            return "ERROR", available_times
+            return False
 
         print("  -> 認証コード入力画面への移行を確認中...")
         for i in range(10):
@@ -371,7 +355,7 @@ def process_store_reservation(page, store_name, target_day=None, target_time="12
                     success_msg = (
                         f"🎉 **【カルティエ来店予約 完全完了！】**\n"
                         f"**店舗:** {store_name}\n"
-                        f"**日時:** 10月{selected_day_str} {target_time}\n"
+                        f"**日時:** 10月{day_num}日 {time_str}\n"
                         f"**お名前:** {USER_INFO['last_name']} {USER_INFO['first_name']} 様\n"
                     )
                     print("\n" + success_msg + "\n")
@@ -383,25 +367,59 @@ def process_store_reservation(page, store_name, target_day=None, target_time="12
                     except Exception as e:
                         print(f"  [フラグファイル作成エラー] {e}")
 
-                    return "RESERVED", available_times
+                    return True
                 else:
-                    return "ERROR", available_times
-                break
-            
-            error_el = page.locator(".error, .error-message, [class*='error'], [class*='invalid']").first
-            if error_el.is_visible(timeout=500):
-                print(f"  -> 【画面上エラー検知】: {error_el.inner_text().strip()}")
-                
+                    return False
             time.sleep(1)
 
-        print(f"  -> 認証画面へ到達できませんでした。（現在のURL: {page.url}）")
-        page.screenshot(path="error_failed_to_auth_page.png")
-        return "ERROR", available_times
+    except Exception as e:
+        print(f"  -> 予約実行中にエラー発生: {e}")
+    
+    return False
 
-    else:
-        # 12:00はないが別の時間が空いている場合
-        print(f"  -> 本命の {target_time} は満席ですが、別の時間帯に空き枠を発見しました: {available_times}")
-        return "OTHER_TIME_AVAILABLE", available_times
+def scan_store_slots(page):
+    """各店舗のページで、すべての空き枠をスキャンして収集する"""
+    time_pattern = re.compile(r"^\d{1,2}:\d{2}$")
+    date_elements = page.locator("button, [role='button'], li, div").all()
+    slots_data = {} # {day_num: [times]}
+
+    for el in date_elements:
+        try:
+            if not el.is_visible():
+                continue
+            text = el.inner_text().strip()
+            if not text.isdigit() or not (1 <= int(text) <= 31):
+                continue
+            
+            class_attr = (el.get_attribute("class") or "").lower()
+            if "cursor-pointer" in class_attr or "day" in class_attr or "date" in class_attr:
+                day_num = int(text)
+                
+                el.click()
+                time.sleep(1.0)
+
+                time_trigger = page.get_by_text(time_pattern).first
+                if time_trigger.is_visible(timeout=1000):
+                    time_trigger.click()
+                    time.sleep(1.0)
+
+                time_options = page.get_by_text(time_pattern).all()
+                day_times = []
+                for t_el in time_options:
+                    try:
+                        if t_el.is_visible():
+                            t_text = t_el.inner_text().strip()
+                            if t_text not in day_times:
+                                day_times.append(t_text)
+                    except Exception:
+                        continue
+                
+                if day_times:
+                    slots_data[day_num] = day_times
+        except Exception:
+            continue
+
+    return slots_data
 
 def setup_page_to_stores(page):
     page.goto(TARGET_URL, wait_until="networkidle", timeout=60000)
@@ -454,7 +472,6 @@ def setup_page_to_stores(page):
         except Exception:
             pass
 
-    # 東京都の選択
     tokyo_candidates = [
         page.get_by_text("東京都", exact=False).first,
         page.locator("xpath=//*[contains(text(), '東京都')]").first
@@ -471,9 +488,10 @@ def setup_page_to_stores(page):
             continue
 
 def main():
-    print("監視実行を開始します（対象：東京都 4店舗）...")
-    reserved_any = False
-    other_time_notifications = []
+    print("監視実行を開始します（対象：東京都 8店舗 / 平日通知 ＆ 土日祝日11:00〜18:00早い時間優先自動予約）...")
+    
+    all_store_availability = {}
+    best_target = None # {"store_name": ..., "day": ..., "time": ...}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -484,6 +502,7 @@ def main():
         page = context.new_page()
 
         try:
+            # 1. 各店舗を巡回して空き状況をスキャン
             for store_name in STORE_PRIORITY:
                 print(f"\n==================================================")
                 print(f"[{store_name}] のチェックを開始します...")
@@ -506,44 +525,22 @@ def main():
                     is_navigated = page.get_by_text("ご予約の日時", exact=False).is_visible(timeout=2500)
 
                     if is_navigated:
-                        print("  -> 画面遷移成功（予約枠あり）！時間帯チェックを開始します...")
-                        status, available_times = process_store_reservation(page, store_name, target_day=TARGET_DAY, target_time=TARGET_TIME)
+                        print("  -> 画面遷移成功（予約枠あり）！空きスロットをスキャンします...")
+                        slots = scan_store_slots(page)
                         
-                        if status == "RESERVED":
-                            reserved_any = True
-                            print("  [二重予約防止] 12:00の全自動予約が完了したため、スクリプトを終了します。")
-                            sys.exit(0)
-                        elif status == "OTHER_TIME_AVAILABLE":
-                            times_str = ", ".join(available_times)
-                            other_time_notifications.append(f"・**{store_name}**: {times_str}")
-                    else:
-                        print("  -> 遷移不可（全枠満席）のため、次の店舗の確認へ移ります。")
-
-                except Exception as e:
-                    print(f"  -> [{store_name}] のチェック中にエラー発生: {e}")
-
-            # 12:00の自動予約が実行されなかった場合の各種Discord通知
-            if not reserved_any:
-                if other_time_notifications:
-                    msg = (
-                        f"🔔 **【10月11日(日) 他の時間帯に空きを発見！】**\n"
-                        f"本命の12:00は満席ですが、以下の店舗・時間帯に空き枠があります：\n\n"
-                        + "\n".join(other_time_notifications) + "\n\n"
-                        f"※本命（12:00）の監視と自動予約処理は継続します。"
-                    )
-                    print("\n" + msg)
-                    send_discord_notification(msg)
-                else:
-                    no_slot_msg = f"ℹ️ 【定期チェック】現在、指定4店舗（10/11 全時間帯）の空き枠はありませんでした。監視を継続します。"
-                    print("\n" + no_slot_msg)
-                    send_discord_notification(no_slot_msg)
-
-        except Exception as e:
-            print(f"実行中にエラーが発生しました: {e}")
-            sys.exit(1)
-        finally:
-            browser.close()
-
-if __name__ == "__main__":
-    main()
-
+                        if slots:
+                            all_store_availability[store_name] = slots
+                            
+                            # 土日祝日かつ 11:00〜18:00 の条件に合うものを評価
+                            for day_num, times in slots.items():
+                                if is_weekend_or_holiday(day_num):
+                                    for t_str in times:
+                                        hour = int(t_str.split(":")[0])
+                                        if TARGET_START_HOUR <= hour <= TARGET_END_HOUR:
+                                            candidate = {"store_name": store_name, "day": day_num, "time": t_str}
+                                            if not best_target:
+                                                best_target = candidate
+                                            else:
+                                                if (candidate["day"] < best_target["day"]) or \
+                                                   (candidate["day"] == best_target["day"] and candidate["time"] < best_target["time"]):
+        
