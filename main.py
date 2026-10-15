@@ -8,7 +8,7 @@ from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 import requests
-import jpholidation
+import jpholiday
 
 # ======================================================================
 # GitHub Secrets（環境変数）から情報を取得
