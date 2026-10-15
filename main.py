@@ -8,7 +8,7 @@ from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright
 import requests
-import jpholiday
+import jpholidation
 
 # ======================================================================
 # GitHub Secrets（環境変数）から情報を取得
@@ -542,4 +542,5 @@ def main():
                                                 best_target = candidate
                                             else:
                                                 is_earlier_day = candidate["day"] < best_target["day"]
-                                                is_same_day_earlier_time = (candidate["day"] == best_target["day"] and candidate["time"] <
+                                                is_same_day_earlier_time = (
+                                                    candid
