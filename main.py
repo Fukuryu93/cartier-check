@@ -37,16 +37,16 @@ FIRST_NAME = name_parts[1] if len(name_parts) > 1 else ""
 
 TARGET_URL = "https://mycartiervisit.jp/cartier/terms-or-services"
 
-# 監視対象店舗（正規表現パターンで表記揺れに対応）
+# サイト上の実際の店舗表記（完全一致用）
 TARGET_STORES = [
-    {"name": "カルティエ 銀座4丁目ブティック", "pattern": r"銀座4丁目"},
-    {"name": "カルティエ 銀座並木通りブティック", "pattern": r"並木通り"},
-    {"name": "カルティエ ブティック GINZA SIX店", "pattern": r"GINZA\s*SIX"},
-    {"name": "カルティエ ブティック 六本木ヒルズ店", "pattern": r"六本木ヒルズ"},
-    {"name": "カルティエ ブティック 西武池袋本店", "pattern": r"池袋"},
-    {"name": "カルティエ ブティック 髙島屋新宿店", "pattern": r"[高髙]島屋"},
-    {"name": "カルティエ ブティック 伊勢丹新宿本店", "pattern": r"伊勢丹"},
-    {"name": "カルティエ ブティック 三越日本橋本店", "pattern": r"日本橋"}
+    "カルティエブティック銀座４丁目店",
+    "カルティエ銀座並木通りブティック",
+    "カルティエブティック GINZA SIX店",
+    "カルティエブティック六本木ヒルズ店",
+    "カルティエブティック西武池袋本店",
+    "カルティエブティック髙島屋新宿店",
+    "カルティエブティック伊勢丹新宿本店",
+    "カルティエブティック三越日本橋本店"
 ]
 
 USER_INFO = {
@@ -319,10 +319,10 @@ def handle_verification_code(page):
     page.screenshot(path="error_not_completed.png")
     return False
 
-def execute_booking(page, pattern, day_num, time_str):
+def execute_booking(page, store_name, day_num, time_str):
     """見つかった特定の店舗・日付・時間を指定して自動予約を完遂する関数"""
     try:
-        print(f"  -> 【自動予約実行】パターン [{pattern}] ({day_num}日 {time_str}) の予約手続きを進めます...")
+        print(f"  -> 【自動予約実行】店舗 [{store_name}] ({day_num}日 {time_str}) の予約手続きを進めます...")
         
         # 1. 日付の再選択
         date_elements = page.locator("button, [role='button'], li, div").all()
@@ -504,35 +504,42 @@ def navigate_to_store_selection(page):
             continue
     time.sleep(2)
 
-def find_and_select_store(page, pattern):
-    """画面外にある店舗カードも横スクロールさせて確実に検索・タップする"""
-    regex = re.compile(pattern)
-    
-    # 該当するテキストを含む要素を全取得
-    locators = page.get_by_text(regex).all()
-    
-    for loc in locators:
+def select_store_card(page, store_name):
+    """正解の完全一致店舗名を見つけ、カード画像またはコンテナ要素を確実にタップする"""
+    try:
+        # 店舗名の要素を検索
+        el = page.get_by_text(store_name, exact=True).first
+        
+        # もし画面外にある場合は見えてくるまでスクロール
         try:
-            # 画面外にあってもスクロールして画面内に持ち込む
-            loc.scroll_into_view_if_needed(timeout=2000)
+            el.scroll_into_view_if_needed(timeout=2000)
             time.sleep(0.5)
+        except:
+            pass
 
-            # 親要素のカード画像・コンテナを取得してタップ
-            parent = loc.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
-            
+        if not el.is_visible(timeout=2000):
+            return False
+
+        # 画像(img)が含まれる親カード要素をタップ
+        try:
+            parent = el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
             img_el = parent.locator("img").first
             if img_el.is_visible(timeout=1000):
                 img_el.click(force=True)
-                print(f"  -> 画像エリアをクリックしました ({pattern})")
+                print(f"  -> [{store_name}] の店舗画像をクリックしました。")
                 return True
             else:
-                loc.click(force=True)
-                print(f"  -> テキストエリアをクリックしました ({pattern})")
+                parent.click(force=True)
+                print(f"  -> [{store_name}] のカード要素をクリックしました。")
                 return True
-        except Exception:
-            continue
+        except:
+            el.click(force=True)
+            print(f"  -> [{store_name}] のテキストをクリックしました。")
+            return True
 
-    return False
+    except Exception as e:
+        print(f"  -> 選択エラー ({store_name}): {e}")
+        return False
 
 def main():
     print("監視実行を開始します（対象：東京都 8店舗 / 平日通知 ＆ 土日祝日11:00〜18:00早い時間優先自動予約）...")
@@ -551,19 +558,16 @@ def main():
         try:
             navigate_to_store_selection(page)
 
-            for store in TARGET_STORES:
-                store_name = store["name"]
-                pattern = store["pattern"]
+            for store_name in TARGET_STORES:
                 print(f"\n==================================================")
-                print(f"[{store_name}] ({pattern}) のチェックを開始します...")
+                print(f"[{store_name}] のチェックを開始します...")
                 
                 try:
-                    # 画面外のカルーセル要素も含めて検索＆タップ
-                    if not find_and_select_store(page, pattern):
-                        print(f"  -> 店舗 [{store_name}] は画面上に見つかりません（スキップ）。")
+                    if not select_store_card(page, store_name):
+                        print(f"  -> 店舗 [{store_name}] は画面上に検出できませんでした（スキップ）。")
                         continue
 
-                    time.sleep(1.5)
+                    time.sleep(1)
 
                     # 右下の「次へ」ボタンを押して次画面へ進む
                     if not click_next_if_exists(page, timeout=3000):
@@ -586,7 +590,7 @@ def main():
                                     for t_str in times:
                                         hour = int(t_str.split(":")[0])
                                         if TARGET_START_HOUR <= hour <= TARGET_END_HOUR:
-                                            candidate = {"store_name": store_name, "pattern": pattern, "day": day_num, "time": t_str}
+                                            candidate = {"store_name": store_name, "day": day_num, "time": t_str}
                                             if not best_target:
                                                 best_target = candidate
                                             else:
@@ -630,13 +634,13 @@ def main():
                 print(f"\n🎉 土日祝の条件合致！最速の枠で自動予約を実行します: {best_target['store_name']} 10月{best_target['day']}日 {best_target['time']}")
                 
                 navigate_to_store_selection(page)
-                find_and_select_store(page, best_target["pattern"])
+                select_store_card(page, best_target["store_name"])
 
                 time.sleep(1)
                 click_next_if_exists(page)
                 time.sleep(2)
 
-                success = execute_booking(page, best_target["pattern"], best_target["day"], best_target["time"])
+                success = execute_booking(page, best_target["store_name"], best_target["day"], best_target["time"])
                 if success:
                     print("自動予約が完了しました。")
                     sys.exit(0)
