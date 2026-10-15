@@ -506,14 +506,34 @@ def main():
                 print(f"[{store_name}] ({keyword}) のチェックを開始します...")
                 
                 try:
-                    # キーワード（部分一致）で店舗ボタンを探索
-                    store_btn = page.get_by_text(keyword, exact=False).first
-                    if not store_btn.is_visible(timeout=3000):
+                    store_text_el = page.get_by_text(keyword, exact=False).first
+                    if not store_text_el.is_visible(timeout=3000):
                         print(f"  -> 店舗 [{store_name}] は満席（または選択不可）のためスキップします。")
                         continue
 
-                    store_btn.scroll_into_view_if_needed(timeout=2000)
-                    store_btn.click(force=True)
+                    # 【修正】店舗名テキストの親カード要素から「画像（img）」を優先してクリックする
+                    clicked = False
+                    try:
+                        parent = store_text_el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
+                        img_el = parent.locator("img").first
+                        if img_el.is_visible(timeout=1500):
+                            img_el.scroll_into_view_if_needed()
+                            img_el.click(force=True)
+                            print(f"  -> [{store_name}] の店舗画像をクリックしました。")
+                            clicked = True
+                        else:
+                            parent.scroll_into_view_if_needed()
+                            parent.click(force=True)
+                            print(f"  -> [{store_name}] の店舗カード要素をクリックしました。")
+                            clicked = True
+                    except Exception:
+                        pass
+
+                    if not clicked:
+                        store_text_el.scroll_into_view_if_needed()
+                        store_text_el.click(force=True)
+                        print(f"  -> [{store_name}] のテキスト要素をクリックしました。")
+
                     time.sleep(1)
 
                     click_next_if_exists(page)
@@ -576,9 +596,19 @@ def main():
                 print(f"\n🎉 土日祝の条件合致！最速の枠で自動予約を実行します: {best_target['store_name']} 10月{best_target['day']}日 {best_target['time']}")
                 
                 navigate_to_store_selection(page)
-                store_btn = page.get_by_text(best_target["keyword"], exact=False).first
-                store_btn.scroll_into_view_if_needed()
-                store_btn.click(force=True)
+                
+                # 予約実行時も同様に画像/カードをクリック
+                store_text_el = page.get_by_text(best_target["keyword"], exact=False).first
+                try:
+                    parent = store_text_el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
+                    img_el = parent.locator("img").first
+                    if img_el.is_visible(timeout=1500):
+                        img_el.click(force=True)
+                    else:
+                        parent.click(force=True)
+                except:
+                    store_text_el.click(force=True)
+
                 time.sleep(1)
                 click_next_if_exists(page)
                 time.sleep(2)
