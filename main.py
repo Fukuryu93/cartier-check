@@ -543,4 +543,54 @@ def main():
                                             else:
                                                 is_earlier_day = candidate["day"] < best_target["day"]
                                                 is_same_day_earlier_time = (
-                                                    candid
+                                                    candidate["day"] == best_target["day"] 
+                                                    and candidate["time"] < best_target["time"]
+                                                )
+                                                if is_earlier_day or is_same_day_earlier_time:
+                                                    best_target = candidate
+                    else:
+                        print("  -> 遷移不可（全枠満席）のため、次の店舗の確認へ移ります。")
+
+                except Exception as e:
+                    print(f"  -> [{store_name}] のチェック中にエラー発生: {e}")
+
+            # 2. 平日も含めたすべての空き状況をDiscordへ通知
+            if all_store_availability:
+                report_lines = ["📋 **【カルティエ 空き状況通知レポート】**\n"]
+                for s_name, slots in all_store_availability.items():
+                    report_lines.append(f"🏪 **{s_name}**")
+                    for day_num, times in slots.items():
+                        day_type = "土日祝" if is_weekend_or_holiday(day_num) else "平日"
+                        report_lines.append(f"　- 10月{day_num}日 ({day_type}): {', '.join(times)}")
+                    report_lines.append("")
+                
+                send_discord_notification("\n".join(report_lines))
+                print("空き状況をDiscordに通知しました。")
+            else:
+                print("ℹ️ 【定期チェック】対象8店舗に空き枠はありませんでした。")
+
+            # 3. 土日祝日（11:00〜18:00）の条件に合う最速の枠があれば、自動予約を実行
+            if best_target:
+                print(f"\n🎉 土日祝の条件合致！最速の枠で自動予約を実行します: {best_target['store_name']} 10月{best_target['day']}日 {best_target['time']}")
+                
+                setup_page_to_stores(page)
+                store_btn = page.get_by_text(best_target["store_name"], exact=False).first
+                store_btn.scroll_into_view_if_needed()
+                store_btn.click(force=True)
+                time.sleep(1)
+                click_next_if_exists(page)
+                time.sleep(2)
+
+                success = execute_booking(page, best_target["store_name"], best_target["day"], best_target["time"])
+                if success:
+                    print("自動予約が完了しました。")
+                    sys.exit(0)
+
+        except Exception as e:
+            print(f"実行中にエラーが発生しました: {e}")
+            sys.exit(1)
+        finally:
+            browser.close()
+
+if __name__ == "__main__":
+    main()
