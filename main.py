@@ -541,6 +541,5 @@ def main():
                                             if not best_target:
                                                 best_target = candidate
                                             else:
-                                                if (candidate["day"] < best_target["day"]) or \
-                                                   (candidate["day"] == best_target["day"] and candidate["time"] < best_target["time"]):
-        
+                                                is_earlier_day = candidate["day"] < best_target["day"]
+                                                is_same_day_earlier_time = (candidate["day"] == best_target["day"] and candidate["time"] <
