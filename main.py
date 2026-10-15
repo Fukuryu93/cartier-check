@@ -37,16 +37,16 @@ FIRST_NAME = name_parts[1] if len(name_parts) > 1 else ""
 
 TARGET_URL = "https://mycartiervisit.jp/cartier/terms-or-services"
 
-# 東京都の監視対象店舗（計8店舗）
-STORE_PRIORITY = [
-    "カルティエ 銀座4丁目ブティック",
-    "カルティエ 銀座並木通りブティック",
-    "カルティエ ブティック GINZA SIX店",
-    "カルティエ ブティック 六本木ヒルズ店",
-    "カルティエ ブティック 西武池袋本店",
-    "カルティエ ブティック 髙島屋新宿店",
-    "カルティエ ブティック 伊勢丹新宿本店",
-    "カルティエ ブティック 三越日本橋本店"
+# 監視対象店舗（サイト上の表記ブレに強いキーワードで指定）
+TARGET_STORES = [
+    {"name": "カルティエ 銀座4丁目ブティック", "keyword": "銀座4丁目"},
+    {"name": "カルティエ 銀座並木通りブティック", "keyword": "並木通り"},
+    {"name": "カルティエ ブティック GINZA SIX店", "keyword": "GINZA SIX"},
+    {"name": "カルティエ ブティック 六本木ヒルズ店", "keyword": "六本木ヒルズ"},
+    {"name": "カルティエ ブティック 西武池袋本店", "keyword": "池袋"},
+    {"name": "カルティエ ブティック 髙島屋新宿店", "keyword": "髙島屋"},
+    {"name": "カルティエ ブティック 伊勢丹新宿本店", "keyword": "伊勢丹"},
+    {"name": "カルティエ ブティック 三越日本橋本店", "keyword": "日本橋"}
 ]
 
 USER_INFO = {
@@ -297,10 +297,10 @@ def handle_verification_code(page):
     page.screenshot(path="error_not_completed.png")
     return False
 
-def execute_booking(page, store_name, day_num, time_str):
+def execute_booking(page, store_keyword, day_num, time_str):
     """見つかった特定の店舗・日付・時間を指定して自動予約を完遂する関数"""
     try:
-        print(f"  -> 【自動予約実行】{store_name} ({day_num}日 {time_str}) の予約手続きを進めます...")
+        print(f"  -> 【自動予約実行】キーワード [{store_keyword}] ({day_num}日 {time_str}) の予約手続きを進めます...")
         
         # 1. 日付の再選択
         date_elements = page.locator("button, [role='button'], li, div").all()
@@ -354,7 +354,6 @@ def execute_booking(page, store_name, day_num, time_str):
                 if success:
                     success_msg = (
                         f"🎉 **【カルティエ来店予約 完全完了！】**\n"
-                        f"**店舗:** {store_name}\n"
                         f"**日時:** 10月{day_num}日 {time_str}\n"
                         f"**お名前:** {USER_INFO['last_name']} {USER_INFO['first_name']} 様\n"
                     )
@@ -457,7 +456,6 @@ def navigate_to_store_selection(page):
     click_next_if_exists(page)
     time.sleep(3)
 
-    # 都道府県（東京都）を選択して店舗一覧画面を表示する
     for trigger_text in ["都市を選ぶ", "エリアを選ぶ", "お店を選んでください", "都道府県", "エリア"]:
         try:
             trigger_btn = page.get_by_text(trigger_text, exact=False).first
@@ -488,7 +486,7 @@ def main():
     print("監視実行を開始します（対象：東京都 8店舗 / 平日通知 ＆ 土日祝日11:00〜18:00早い時間優先自動予約）...")
     
     all_store_availability = {}
-    best_target = None # {"store_name": ..., "day": ..., "time": ...}
+    best_target = None
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -499,16 +497,17 @@ def main():
         page = context.new_page()
 
         try:
-            # 1. 一度だけ店舗一覧画面まで遷移する
             navigate_to_store_selection(page)
 
-            # 2. 各店舗を同じ一覧画面から順番に確認する
-            for store_name in STORE_PRIORITY:
+            for store in TARGET_STORES:
+                store_name = store["name"]
+                keyword = store["keyword"]
                 print(f"\n==================================================")
-                print(f"[{store_name}] のチェックを開始します...")
+                print(f"[{store_name}] ({keyword}) のチェックを開始します...")
                 
                 try:
-                    store_btn = page.get_by_text(store_name, exact=False).first
+                    # キーワード（部分一致）で店舗ボタンを探索
+                    store_btn = page.get_by_text(keyword, exact=False).first
                     if not store_btn.is_visible(timeout=3000):
                         print(f"  -> 店舗 [{store_name}] は満席（または選択不可）のためスキップします。")
                         continue
@@ -529,13 +528,12 @@ def main():
                         if slots:
                             all_store_availability[store_name] = slots
                             
-                            # 土日祝日かつ 11:00〜18:00 の条件に合うものを評価
                             for day_num, times in slots.items():
                                 if is_weekend_or_holiday(day_num):
                                     for t_str in times:
                                         hour = int(t_str.split(":")[0])
                                         if TARGET_START_HOUR <= hour <= TARGET_END_HOUR:
-                                            candidate = {"store_name": store_name, "day": day_num, "time": t_str}
+                                            candidate = {"store_name": store_name, "keyword": keyword, "day": day_num, "time": t_str}
                                             if not best_target:
                                                 best_target = candidate
                                             else:
@@ -549,7 +547,6 @@ def main():
                     else:
                         print("  -> 遷移不可（満席）のため、次の店舗の確認へ移ります。")
 
-                    # 次の店舗をチェックするために店舗一覧画面へ戻る
                     page.go_back()
                     time.sleep(2)
 
@@ -561,7 +558,6 @@ def main():
                     except:
                         pass
 
-            # 3. 平日も含めたすべての空き状況をDiscordへ通知
             if all_store_availability:
                 report_lines = ["📋 **【カルティエ 空き状況通知レポート】**\n"]
                 for s_name, slots in all_store_availability.items():
@@ -576,19 +572,18 @@ def main():
             else:
                 print("ℹ️ 【定期チェック】対象8店舗に空き枠はありませんでした。")
 
-            # 4. 土日祝日（11:00〜18:00）の条件に合う最速の枠があれば、自動予約を実行
             if best_target:
                 print(f"\n🎉 土日祝の条件合致！最速の枠で自動予約を実行します: {best_target['store_name']} 10月{best_target['day']}日 {best_target['time']}")
                 
                 navigate_to_store_selection(page)
-                store_btn = page.get_by_text(best_target["store_name"], exact=False).first
+                store_btn = page.get_by_text(best_target["keyword"], exact=False).first
                 store_btn.scroll_into_view_if_needed()
                 store_btn.click(force=True)
                 time.sleep(1)
                 click_next_if_exists(page)
                 time.sleep(2)
 
-                success = execute_booking(page, best_target["store_name"], best_target["day"], best_target["time"])
+                success = execute_booking(page, best_target["keyword"], best_target["day"], best_target["time"])
                 if success:
                     print("自動予約が完了しました。")
                     sys.exit(0)
