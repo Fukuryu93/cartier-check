@@ -37,14 +37,14 @@ FIRST_NAME = name_parts[1] if len(name_parts) > 1 else ""
 
 TARGET_URL = "https://mycartiervisit.jp/cartier/terms-or-services"
 
-# 監視対象店舗（サイト上の表記ブレに強いキーワードで指定）
+# 監視対象店舗のキーワード（画像のように店舗名・エリア名が含まれるもの）
 TARGET_STORES = [
     {"name": "カルティエ 銀座4丁目ブティック", "keyword": "銀座4丁目"},
     {"name": "カルティエ 銀座並木通りブティック", "keyword": "並木通り"},
     {"name": "カルティエ ブティック GINZA SIX店", "keyword": "GINZA SIX"},
     {"name": "カルティエ ブティック 六本木ヒルズ店", "keyword": "六本木ヒルズ"},
     {"name": "カルティエ ブティック 西武池袋本店", "keyword": "池袋"},
-    {"name": "カルティエ ブティック 髙島屋新宿店", "keyword": "髙島屋"},
+    {"name": "カルティエ ブティック 髙島屋新宿店", "keyword": "高島屋"},
     {"name": "カルティエ ブティック 伊勢丹新宿本店", "keyword": "伊勢丹"},
     {"name": "カルティエ ブティック 三越日本橋本店", "keyword": "日本橋"}
 ]
@@ -90,17 +90,19 @@ def is_weekend_or_holiday(day_int: int) -> bool:
     return False
 
 def click_next_if_exists(page, timeout=3000):
-    next_keywords = ["次へ", "進む", "確認画面へ", "次へ進む"]
+    """右下の「次へ」ボタンを確実に狙ってクリックする"""
+    next_keywords = ["次へ", "進む", "確認画面へ", "次へ進む", "→"]
     for kw in next_keywords:
         try:
-            btn = page.get_by_role("button", name=re.compile(kw)).first
+            # 画面右下にある「次へ」ボタンや矢印を優先的に探す
+            btn = page.get_by_role("button", name=re.compile(kw)).last
             if not btn.is_visible():
-                btn = page.get_by_text(kw).first
+                btn = page.get_by_text(kw).last
 
             if btn.is_visible(timeout=timeout):
                 btn.scroll_into_view_if_needed()
                 btn.click(force=True)
-                print(f"  -> 「{kw}」をクリックしました")
+                print(f"  -> 「{kw}」ボタンをクリックしました")
                 page.wait_for_load_state("networkidle", timeout=5000)
                 return True
         except Exception:
@@ -508,10 +510,10 @@ def main():
                 try:
                     store_text_el = page.get_by_text(keyword, exact=False).first
                     if not store_text_el.is_visible(timeout=3000):
-                        print(f"  -> 店舗 [{store_name}] は満席（または選択不可）のためスキップします。")
+                        print(f"  -> 店舗 [{store_name}] は画面内に見つかりません。")
                         continue
 
-                    # 【修正】店舗名テキストの親カード要素から「画像（img）」を優先してクリックする
+                    # 【修正ポイント】店舗名テキストの親要素から「写真画像（img）」を最優先でクリックする
                     clicked = False
                     try:
                         parent = store_text_el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
@@ -519,7 +521,7 @@ def main():
                         if img_el.is_visible(timeout=1500):
                             img_el.scroll_into_view_if_needed()
                             img_el.click(force=True)
-                            print(f"  -> [{store_name}] の店舗画像をクリックしました。")
+                            print(f"  -> [{store_name}] の店舗写真画像をクリックしました。")
                             clicked = True
                         else:
                             parent.scroll_into_view_if_needed()
@@ -532,11 +534,17 @@ def main():
                     if not clicked:
                         store_text_el.scroll_into_view_if_needed()
                         store_text_el.click(force=True)
-                        print(f"  -> [{store_name}] のテキスト要素をクリックしました。")
+                        print(f"  -> [{store_name}] のテキスト部分をクリックしました。")
 
-                    time.sleep(1)
+                    time.sleep(1.5)
 
-                    click_next_if_exists(page)
+                    # 店舗を選択したら、必ず右下の「次へ」ボタンを押して次画面へ進む
+                    if not click_next_if_exists(page, timeout=3000):
+                        print(f"  -> [{store_name}] は満席（または選択不可）のため次へ進めませんでした。スキップします。")
+                        # 選択を解除するか画面をリセットするために一覧を再読み込み
+                        navigate_to_store_selection(page)
+                        continue
+
                     time.sleep(2)
 
                     is_navigated = page.get_by_text("ご予約の日時", exact=False).is_visible(timeout=2500)
@@ -567,14 +575,13 @@ def main():
                     else:
                         print("  -> 遷移不可（満席）のため、次の店舗の確認へ移ります。")
 
-                    page.go_back()
-                    time.sleep(2)
+                    # 次の店舗をチェックするために店舗一覧画面へ戻る
+                    navigate_to_store_selection(page)
 
                 except Exception as e:
                     print(f"  -> [{store_name}] のチェック中にエラー発生: {e}")
                     try:
-                        page.go_back()
-                        time.sleep(2)
+                        navigate_to_store_selection(page)
                     except:
                         pass
 
@@ -597,7 +604,6 @@ def main():
                 
                 navigate_to_store_selection(page)
                 
-                # 予約実行時も同様に画像/カードをクリック
                 store_text_el = page.get_by_text(best_target["keyword"], exact=False).first
                 try:
                     parent = store_text_el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
