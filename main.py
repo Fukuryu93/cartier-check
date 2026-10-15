@@ -421,7 +421,8 @@ def scan_store_slots(page):
 
     return slots_data
 
-def setup_page_to_stores(page):
+def navigate_to_store_selection(page):
+    """規約同意から進めて、東京都の店舗一覧画面に到達させる"""
     page.goto(TARGET_URL, wait_until="networkidle", timeout=60000)
     time.sleep(2)
     page.get_by_text("規約に同意する").first.click(force=True)
@@ -434,13 +435,14 @@ def setup_page_to_stores(page):
     if cat_btn.is_visible(timeout=3000):
         cat_btn.click(force=True)
         time.sleep(1)
+    
     click_next_if_exists(page)
     time.sleep(2)
 
     item_btn = page.get_by_text("婚約指輪").first
     if item_btn.is_visible(timeout=3000):
         item_btn.click(force=True)
-        time.sleep(3)
+        time.sleep(2)
 
     solitaire_btn = page.get_by_text("ソリテール").first
     if solitaire_btn.is_visible(timeout=3000):
@@ -453,15 +455,9 @@ def setup_page_to_stores(page):
         time.sleep(1)
 
     click_next_if_exists(page)
-    time.sleep(4)
+    time.sleep(3)
 
-    try:
-        page.wait_for_load_state("networkidle", timeout=5000)
-    except Exception:
-        pass
-    page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
-    time.sleep(1)
-
+    # 都道府県（東京都）を選択して店舗一覧画面を表示する
     for trigger_text in ["都市を選ぶ", "エリアを選ぶ", "お店を選んでください", "都道府県", "エリア"]:
         try:
             trigger_btn = page.get_by_text(trigger_text, exact=False).first
@@ -486,6 +482,7 @@ def setup_page_to_stores(page):
                 break
         except Exception:
             continue
+    time.sleep(2)
 
 def main():
     print("監視実行を開始します（対象：東京都 8店舗 / 平日通知 ＆ 土日祝日11:00〜18:00早い時間優先自動予約）...")
@@ -502,17 +499,18 @@ def main():
         page = context.new_page()
 
         try:
-            # 1. 各店舗を巡回して空き状況をスキャン
+            # 1. 一度だけ店舗一覧画面まで遷移する
+            navigate_to_store_selection(page)
+
+            # 2. 各店舗を同じ一覧画面から順番に確認する
             for store_name in STORE_PRIORITY:
                 print(f"\n==================================================")
                 print(f"[{store_name}] のチェックを開始します...")
                 
                 try:
-                    setup_page_to_stores(page)
-                    
                     store_btn = page.get_by_text(store_name, exact=False).first
                     if not store_btn.is_visible(timeout=3000):
-                        print(f"  -> 店舗 [{store_name}] が画面上に見つかりませんでした。スキップします。")
+                        print(f"  -> 店舗 [{store_name}] は満席（または選択不可）のためスキップします。")
                         continue
 
                     store_btn.scroll_into_view_if_needed(timeout=2000)
@@ -549,12 +547,21 @@ def main():
                                                 if is_earlier_day or is_same_day_earlier_time:
                                                     best_target = candidate
                     else:
-                        print("  -> 遷移不可（全枠満席）のため、次の店舗の確認へ移ります。")
+                        print("  -> 遷移不可（満席）のため、次の店舗の確認へ移ります。")
+
+                    # 次の店舗をチェックするために店舗一覧画面へ戻る
+                    page.go_back()
+                    time.sleep(2)
 
                 except Exception as e:
                     print(f"  -> [{store_name}] のチェック中にエラー発生: {e}")
+                    try:
+                        page.go_back()
+                        time.sleep(2)
+                    except:
+                        pass
 
-            # 2. 平日も含めたすべての空き状況をDiscordへ通知
+            # 3. 平日も含めたすべての空き状況をDiscordへ通知
             if all_store_availability:
                 report_lines = ["📋 **【カルティエ 空き状況通知レポート】**\n"]
                 for s_name, slots in all_store_availability.items():
@@ -569,11 +576,11 @@ def main():
             else:
                 print("ℹ️ 【定期チェック】対象8店舗に空き枠はありませんでした。")
 
-            # 3. 土日祝日（11:00〜18:00）の条件に合う最速の枠があれば、自動予約を実行
+            # 4. 土日祝日（11:00〜18:00）の条件に合う最速の枠があれば、自動予約を実行
             if best_target:
                 print(f"\n🎉 土日祝の条件合致！最速の枠で自動予約を実行します: {best_target['store_name']} 10月{best_target['day']}日 {best_target['time']}")
                 
-                setup_page_to_stores(page)
+                navigate_to_store_selection(page)
                 store_btn = page.get_by_text(best_target["store_name"], exact=False).first
                 store_btn.scroll_into_view_if_needed()
                 store_btn.click(force=True)
