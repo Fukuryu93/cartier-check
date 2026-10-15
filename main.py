@@ -37,16 +37,16 @@ FIRST_NAME = name_parts[1] if len(name_parts) > 1 else ""
 
 TARGET_URL = "https://mycartiervisit.jp/cartier/terms-or-services"
 
-# 監視対象店舗のキーワード
+# 監視対象店舗（正規表現パターンで表記揺れに対応）
 TARGET_STORES = [
-    {"name": "カルティエ 銀座4丁目ブティック", "keyword": "銀座4丁目"},
-    {"name": "カルティエ 銀座並木通りブティック", "keyword": "並木通り"},
-    {"name": "カルティエ ブティック GINZA SIX店", "keyword": "GINZA SIX"},
-    {"name": "カルティエ ブティック 六本木ヒルズ店", "keyword": "六本木ヒルズ"},
-    {"name": "カルティエ ブティック 西武池袋本店", "keyword": "池袋"},
-    {"name": "カルティエ ブティック 髙島屋新宿店", "keyword": "高島屋"},
-    {"name": "カルティエ ブティック 伊勢丹新宿本店", "keyword": "伊勢丹"},
-    {"name": "カルティエ ブティック 三越日本橋本店", "keyword": "日本橋"}
+    {"name": "カルティエ 銀座4丁目ブティック", "pattern": r"銀座4丁目"},
+    {"name": "カルティエ 銀座並木通りブティック", "pattern": r"並木通り"},
+    {"name": "カルティエ ブティック GINZA SIX店", "pattern": r"GINZA\s*SIX"},
+    {"name": "カルティエ ブティック 六本木ヒルズ店", "pattern": r"六本木ヒルズ"},
+    {"name": "カルティエ ブティック 西武池袋本店", "pattern": r"池袋"},
+    {"name": "カルティエ ブティック 髙島屋新宿店", "pattern": r"[高髙]島屋"},
+    {"name": "カルティエ ブティック 伊勢丹新宿本店", "pattern": r"伊勢丹"},
+    {"name": "カルティエ ブティック 三越日本橋本店", "pattern": r"日本橋"}
 ]
 
 USER_INFO = {
@@ -121,7 +121,6 @@ def click_back_button(page):
                 return True
         except Exception:
             continue
-    # 万が一見つからない場合はブラウザバック
     try:
         page.go_back()
         time.sleep(2)
@@ -320,10 +319,10 @@ def handle_verification_code(page):
     page.screenshot(path="error_not_completed.png")
     return False
 
-def execute_booking(page, store_keyword, day_num, time_str):
+def execute_booking(page, pattern, day_num, time_str):
     """見つかった特定の店舗・日付・時間を指定して自動予約を完遂する関数"""
     try:
-        print(f"  -> 【自動予約実行】キーワード [{store_keyword}] ({day_num}日 {time_str}) の予約手続きを進めます...")
+        print(f"  -> 【自動予約実行】パターン [{pattern}] ({day_num}日 {time_str}) の予約手続きを進めます...")
         
         # 1. 日付の再選択
         date_elements = page.locator("button, [role='button'], li, div").all()
@@ -505,6 +504,36 @@ def navigate_to_store_selection(page):
             continue
     time.sleep(2)
 
+def find_and_select_store(page, pattern):
+    """画面外にある店舗カードも横スクロールさせて確実に検索・タップする"""
+    regex = re.compile(pattern)
+    
+    # 該当するテキストを含む要素を全取得
+    locators = page.get_by_text(regex).all()
+    
+    for loc in locators:
+        try:
+            # 画面外にあってもスクロールして画面内に持ち込む
+            loc.scroll_into_view_if_needed(timeout=2000)
+            time.sleep(0.5)
+
+            # 親要素のカード画像・コンテナを取得してタップ
+            parent = loc.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
+            
+            img_el = parent.locator("img").first
+            if img_el.is_visible(timeout=1000):
+                img_el.click(force=True)
+                print(f"  -> 画像エリアをクリックしました ({pattern})")
+                return True
+            else:
+                loc.click(force=True)
+                print(f"  -> テキストエリアをクリックしました ({pattern})")
+                return True
+        except Exception:
+            continue
+
+    return False
+
 def main():
     print("監視実行を開始します（対象：東京都 8店舗 / 平日通知 ＆ 土日祝日11:00〜18:00早い時間優先自動予約）...")
     
@@ -524,38 +553,15 @@ def main():
 
             for store in TARGET_STORES:
                 store_name = store["name"]
-                keyword = store["keyword"]
+                pattern = store["pattern"]
                 print(f"\n==================================================")
-                print(f"[{store_name}] ({keyword}) のチェックを開始します...")
+                print(f"[{store_name}] ({pattern}) のチェックを開始します...")
                 
                 try:
-                    store_text_el = page.get_by_text(keyword, exact=False).first
-                    if not store_text_el.is_visible(timeout=3000):
-                        print(f"  -> 店舗 [{store_name}] は画面内に見つかりません。")
+                    # 画面外のカルーセル要素も含めて検索＆タップ
+                    if not find_and_select_store(page, pattern):
+                        print(f"  -> 店舗 [{store_name}] は画面上に見つかりません（スキップ）。")
                         continue
-
-                    # 店舗カードや画像をクリックして選択状態にする
-                    clicked = False
-                    try:
-                        parent = store_text_el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
-                        img_el = parent.locator("img").first
-                        if img_el.is_visible(timeout=1500):
-                            img_el.scroll_into_view_if_needed()
-                            img_el.click(force=True)
-                            print(f"  -> [{store_name}] の店舗写真画像をクリックしました。")
-                            clicked = True
-                        else:
-                            parent.scroll_into_view_if_needed()
-                            parent.click(force=True)
-                            print(f"  -> [{store_name}] の店舗カード要素をクリックしました。")
-                            clicked = True
-                    except Exception:
-                        pass
-
-                    if not clicked:
-                        store_text_el.scroll_into_view_if_needed()
-                        store_text_el.click(force=True)
-                        print(f"  -> [{store_name}] のテキスト部分をクリックしました。")
 
                     time.sleep(1.5)
 
@@ -580,7 +586,7 @@ def main():
                                     for t_str in times:
                                         hour = int(t_str.split(":")[0])
                                         if TARGET_START_HOUR <= hour <= TARGET_END_HOUR:
-                                            candidate = {"store_name": store_name, "keyword": keyword, "day": day_num, "time": t_str}
+                                            candidate = {"store_name": store_name, "pattern": pattern, "day": day_num, "time": t_str}
                                             if not best_target:
                                                 best_target = candidate
                                             else:
@@ -594,13 +600,12 @@ def main():
                     else:
                         print("  -> 遷移不可（満席）のため、次の店舗の確認へ移ります。")
 
-                    # 【重要修正】「ご予約の日時」画面から左下の「← 戻る」ボタンを押して店舗一覧に戻る
+                    # 左下の「← 戻る」ボタンを押して店舗一覧に戻る
                     click_back_button(page)
                     time.sleep(2)
 
                 except Exception as e:
                     print(f"  -> [{store_name}] のチェック中にエラー発生: {e}")
-                    # エラー時も安全に店舗一覧に戻る試行
                     try:
                         click_back_button(page)
                         time.sleep(2)
@@ -625,23 +630,13 @@ def main():
                 print(f"\n🎉 土日祝の条件合致！最速の枠で自動予約を実行します: {best_target['store_name']} 10月{best_target['day']}日 {best_target['time']}")
                 
                 navigate_to_store_selection(page)
-                
-                store_text_el = page.get_by_text(best_target["keyword"], exact=False).first
-                try:
-                    parent = store_text_el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
-                    img_el = parent.locator("img").first
-                    if img_el.is_visible(timeout=1500):
-                        img_el.click(force=True)
-                    else:
-                        parent.click(force=True)
-                except:
-                    store_text_el.click(force=True)
+                find_and_select_store(page, best_target["pattern"])
 
                 time.sleep(1)
                 click_next_if_exists(page)
                 time.sleep(2)
 
-                success = execute_booking(page, best_target["keyword"], best_target["day"], best_target["time"])
+                success = execute_booking(page, best_target["pattern"], best_target["day"], best_target["time"])
                 if success:
                     print("自動予約が完了しました。")
                     sys.exit(0)
