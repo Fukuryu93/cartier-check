@@ -107,28 +107,6 @@ def click_next_if_exists(page, timeout=3000):
             continue
     return False
 
-def click_back_button(page):
-    """左下の「← 戻る」ボタンを押して店舗一覧に戻る"""
-    back_keywords = ["戻る", "←"]
-    for kw in back_keywords:
-        try:
-            btn = page.get_by_text(kw, exact=False).first
-            if btn.is_visible(timeout=2000):
-                btn.scroll_into_view_if_needed()
-                btn.click(force=True)
-                print(f"  -> 「{kw}」ボタン（戻る）をクリックしました")
-                time.sleep(2)
-                return True
-        except Exception:
-            continue
-    try:
-        page.go_back()
-        time.sleep(2)
-        return True
-    except:
-        pass
-    return False
-
 def click_confirm_button(page, timeout=3000):
     selectors = [
         page.locator("button, a, [role='button'], input[type='submit']").filter(has_text=re.compile(r"予約確定")),
@@ -505,9 +483,8 @@ def navigate_to_store_selection(page):
     time.sleep(2)
 
 def select_store_card(page, store_name):
-    """正解の店舗名要素を見つけ、スクロールした上でカード画像またはコンテナ要素をタップする"""
+    """指定の店舗名要素を見つけ、カード画像またはコンテナ要素を確実にタップする"""
     try:
-        # 店舗名テキストを持つ要素を取得
         locators = page.get_by_text(store_name).all()
         target_el = None
         
@@ -524,7 +501,6 @@ def select_store_card(page, store_name):
         if not target_el:
             return False
 
-        # 親要素から画像(img)またはクリック可能領域を取得してタップ
         try:
             parent = target_el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
             img_el = parent.locator("img").first
@@ -560,13 +536,14 @@ def main():
         page = context.new_page()
 
         try:
-            navigate_to_store_selection(page)
-
             for store_name in TARGET_STORES:
                 print(f"\n==================================================")
                 print(f"[{store_name}] のチェックを開始します...")
                 
                 try:
+                    # 毎回確実に最初の店舗一覧画面から安全にスタートする
+                    navigate_to_store_selection(page)
+
                     if not select_store_card(page, store_name):
                         print(f"  -> 店舗 [{store_name}] は画面上に検出できませんでした（スキップ）。")
                         continue
@@ -608,17 +585,8 @@ def main():
                     else:
                         print("  -> 遷移不可（満席）のため、次の店舗の確認へ移ります。")
 
-                    # 左下の「← 戻る」ボタンを押して店舗一覧に戻る
-                    click_back_button(page)
-                    time.sleep(2)
-
                 except Exception as e:
                     print(f"  -> [{store_name}] のチェック中にエラー発生: {e}")
-                    try:
-                        click_back_button(page)
-                        time.sleep(2)
-                    except:
-                        pass
 
             if all_store_availability:
                 report_lines = ["📋 **【カルティエ 空き状況通知レポート】**\n"]
