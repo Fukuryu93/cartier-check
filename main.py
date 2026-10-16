@@ -505,24 +505,28 @@ def navigate_to_store_selection(page):
     time.sleep(2)
 
 def select_store_card(page, store_name):
-    """正解の完全一致店舗名を見つけ、カード画像またはコンテナ要素を確実にタップする"""
+    """正解の店舗名要素を見つけ、スクロールした上でカード画像またはコンテナ要素をタップする"""
     try:
-        # 店舗名の要素を検索
-        el = page.get_by_text(store_name, exact=True).first
+        # 店舗名テキストを持つ要素を取得
+        locators = page.get_by_text(store_name).all()
+        target_el = None
         
-        # もし画面外にある場合は見えてくるまでスクロール
-        try:
-            el.scroll_into_view_if_needed(timeout=2000)
-            time.sleep(0.5)
-        except:
-            pass
+        for loc in locators:
+            try:
+                loc.scroll_into_view_if_needed(timeout=2000)
+                time.sleep(0.3)
+                if loc.is_visible(timeout=1000):
+                    target_el = loc
+                    break
+            except:
+                continue
 
-        if not el.is_visible(timeout=2000):
+        if not target_el:
             return False
 
-        # 画像(img)が含まれる親カード要素をタップ
+        # 親要素から画像(img)またはクリック可能領域を取得してタップ
         try:
-            parent = el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
+            parent = target_el.locator("xpath=ancestor::*[contains(@class, 'store') or contains(@class, 'card') or contains(@class, 'item') or contains(@class, 'box') or self::button or self::a or self::label][1]")
             img_el = parent.locator("img").first
             if img_el.is_visible(timeout=1000):
                 img_el.click(force=True)
@@ -533,7 +537,7 @@ def select_store_card(page, store_name):
                 print(f"  -> [{store_name}] のカード要素をクリックしました。")
                 return True
         except:
-            el.click(force=True)
+            target_el.click(force=True)
             print(f"  -> [{store_name}] のテキストをクリックしました。")
             return True
 
